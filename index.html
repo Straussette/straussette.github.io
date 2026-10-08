@@ -122,6 +122,27 @@
   .actions { display:flex; gap:8px; align-items:center; margin-top:4px; }
   .spacer { flex:1; }
 
+  /* ---------- Recherche du vin ---------- */
+  .search-box { display:grid; gap:8px; padding:12px; border-radius:12px; background:color-mix(in srgb, var(--accent) 7%, var(--surface)); border:1px solid color-mix(in srgb, var(--accent) 20%, var(--border)); }
+  .search-row { display:flex; gap:8px; }
+  .search-row input { flex:1; min-width:0; }
+  .search-row .btn { white-space:nowrap; }
+  .search-help { font-size:.8rem; color:var(--muted); margin:0; }
+  .search-status { font-size:.9rem; margin:0; }
+  .search-status.err { color:var(--passe); }
+  .spin { display:inline-block; width:14px; height:14px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:tourne .8s linear infinite; vertical-align:-2px; margin-right:6px; }
+  @keyframes tourne { to { transform:rotate(360deg); } }
+  .btn:disabled { opacity:.6; cursor:wait; }
+
+  .fiche { display:grid; gap:8px; padding:12px; border-radius:12px; border:1px solid var(--border); font-size:.92rem; line-height:1.45; }
+  .fiche h3 { margin:0; font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600; }
+  .fiche p, .fiche ul { margin:0; }
+  .fiche ul { padding-left:18px; }
+  .fiche .meta { display:flex; flex-wrap:wrap; gap:6px; }
+  .fiche .pill { font-size:.8rem; padding:2px 8px; border-radius:999px; background:var(--border); }
+  .fiche a { color:var(--accent); word-break:break-all; font-size:.8rem; }
+  .valeur { font-size:.8rem; color:var(--muted); margin-top:4px; }
+
   @media (max-width:600px) {
     dialog { width:100%; max-width:100%; height:100dvh; max-height:100dvh; border-radius:0; margin:0; }
     form { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
@@ -164,6 +185,17 @@
 <dialog id="dlg">
   <form id="form" novalidate>
     <h2 id="dlgTitle">Nouvelle bouteille</h2>
+
+    <div class="search-box">
+      <div class="search-row">
+        <input id="q" type="search" autocomplete="off" placeholder="ex. Jamet Côte-Rôtie 2015" aria-label="Rechercher ce vin">
+        <button type="button" class="btn primary" id="btnSearch">🔍 Rechercher</button>
+      </div>
+      <p class="search-help" id="searchHelp">Tapez quelques mots : la fiche se remplit toute seule (≈ 20 s). Vérifiez avant d'enregistrer.</p>
+      <p class="search-status" id="searchStatus" hidden></p>
+    </div>
+
+    <div class="fiche" id="fiche" hidden></div>
 
     <label class="photo-pick">
       <input type="file" id="photo" accept="image/*" hidden>
@@ -239,6 +271,10 @@
    ========================================================= */
 
 const COULEURS = ['Rouge', 'Blanc', 'Rosé', 'Effervescent', 'Liquoreux'];
+const API_RECHERCHE = 'https://axioguzxjiowpyvqmobo.supabase.co/functions/v1/chercher-vin';
+// Informations trouvées par la recherche, gardées avec la bouteille
+const CHAMPS_FICHE = ['pays', 'cepages', 'apogee', 'description', 'accords', 'service', 'prixMin', 'prixMax', 'confiance', 'sources'];
+let ficheEnCours = null;
 const $ = (sel) => document.querySelector(sel);
 
 let bottles = [];        // toutes les bouteilles
@@ -314,6 +350,14 @@ function compresser(file) {
   });
 }
 
+const fmtEuro = (n) => Math.round(n).toLocaleString('fr-FR') + ' €';
+// Valeur estimée : milieu de la fourchette trouvée, sinon prix d'achat
+function valeurUnitaire(b) {
+  const min = Number(b.prixMin) || 0, max = Number(b.prixMax) || 0;
+  if (min && max) return (min + max) / 2;
+  return min || max || Number(b.prix) || 0;
+}
+
 // Statut de la fenêtre de dégustation
 function statut(b) {
   const an = new Date().getFullYear();
@@ -340,6 +384,7 @@ function carte(b) {
           <div class="sub"><span class="dot c-${c}"></span>${esc(sousTitre)}</div>
           ${st ? `<div class="badge ${st.cls}">${st.txt}</div>` : ''}
           ${b.emplacement ? `<div class="loc">📍 ${esc(b.emplacement)}</div>` : ''}
+          ${valeurUnitaire(b) ? `<div class="valeur">≈ ${fmtEuro(valeurUnitaire(b))} / bouteille</div>` : ''}
         </div>
       </button>
       <div class="qty">
@@ -391,7 +436,9 @@ function afficher() {
 
   const total = bottles.reduce((s, b) => s + b.quantite, 0);
   const refs = bottles.filter((b) => b.quantite > 0).length;
-  $('#stats').textContent = `${total} bouteille${total > 1 ? 's' : ''} · ${refs} vin${refs > 1 ? 's' : ''} différent${refs > 1 ? 's' : ''}`;
+  const valeur = bottles.reduce((s, b) => s + (valeurUnitaire(b) || 0) * b.quantite, 0);
+  $('#stats').textContent = `${total} bouteille${total > 1 ? 's' : ''} · ${refs} vin${refs > 1 ? 's' : ''} différent${refs > 1 ? 's' : ''}`
+    + (valeur ? ` · valeur estimée ≈ ${fmtEuro(valeur)}` : '');
 
   afficherChips();
 }
@@ -408,6 +455,10 @@ function ouvrirFormulaire(b = null) {
   for (const k of CHAMPS) $('#f-' + k).value = b ? (b[k] ?? '') : '';
   if (!b) { $('#f-couleur').value = 'Rouge'; $('#f-quantite').value = 1; }
   montrerPhoto(b && b.photo);
+  ficheEnCours = b && b.description ? Object.fromEntries(CHAMPS_FICHE.map((k) => [k, b[k]])) : null;
+  afficherFiche(ficheEnCours);
+  $('#q').value = '';
+  statutRecherche('');
   $('#dlg').showModal();
 }
 
@@ -436,6 +487,87 @@ function lireFormulaire() {
   };
 }
 
+/* ---------- Recherche du vin sur internet ---------- */
+function statutRecherche(txt, erreur = false, enCours = false) {
+  const el = $('#searchStatus');
+  el.hidden = !txt;
+  el.className = 'search-status' + (erreur ? ' err' : '');
+  el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
+}
+
+function afficherFiche(f) {
+  const el = $('#fiche');
+  if (!f || !f.description) { el.hidden = true; el.innerHTML = ''; return; }
+  const prix = f.prixMin && f.prixMax ? `${fmtEuro(f.prixMin)} – ${fmtEuro(f.prixMax)}` : (f.prixMin || f.prixMax ? fmtEuro(f.prixMin || f.prixMax) : '');
+  const accords = Array.isArray(f.accords) ? f.accords : (f.accords ? [f.accords] : []);
+  const sources = (Array.isArray(f.sources) ? f.sources : []).filter((u) => /^https?:\/\//.test(u)).slice(0, 4);
+  el.innerHTML = `
+    <div class="meta">
+      ${f.cepages ? `<span class="pill">🍇 ${esc(f.cepages)}</span>` : ''}
+      ${prix ? `<span class="pill">💶 ${prix}</span>` : ''}
+      ${f.confiance ? `<span class="pill">Fiabilité : ${esc(f.confiance)}</span>` : ''}
+    </div>
+    <div><h3>Le vin</h3><p>${esc(f.description)}</p></div>
+    ${f.apogee ? `<div><h3>Quand le boire</h3><p>${esc(f.apogee)}</p></div>` : ''}
+    ${accords.length ? `<div><h3>Avec quoi</h3><ul>${accords.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
+    ${f.service ? `<div><h3>Service</h3><p>${esc(f.service)}</p></div>` : ''}
+    ${sources.length ? `<div><h3>Sources</h3>${sources.map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></div>`).join('')}</div>` : ''}`;
+  el.hidden = false;
+}
+
+async function rechercherVin() {
+  let requete = $('#q').value.trim();
+  if (!requete) {
+    // Sinon, on utilise ce qui est déjà saisi dans le formulaire
+    requete = ['domaine', 'cuvee', 'appellation', 'millesime'].map((k) => $('#f-' + k).value.trim()).filter(Boolean).join(' ');
+  }
+  if (requete.length < 3) {
+    statutRecherche('Tapez au moins le domaine ou l\'appellation.', true);
+    return;
+  }
+
+  const bouton = $('#btnSearch');
+  bouton.disabled = true;
+  statutRecherche('Recherche en cours sur internet…', false, true);
+  try {
+    const r = await fetch(API_RECHERCHE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requete }),
+    });
+    const f = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(f.erreur || f.message || `Erreur ${r.status}`);
+    if (!f.trouve) {
+      statutRecherche(f.message || 'Vin introuvable. Essayez avec d\'autres mots.', true);
+      return;
+    }
+
+    // Remplit le formulaire avec ce qui a été trouvé
+    const remplir = (k, v) => { if (v !== null && v !== undefined && v !== '') $('#f-' + k).value = v; };
+    remplir('domaine', f.domaine);
+    remplir('cuvee', f.cuvee);
+    remplir('appellation', f.appellation);
+    remplir('region', f.region);
+    remplir('millesime', f.millesime);
+    if (COULEURS.includes(f.couleur)) $('#f-couleur').value = f.couleur;
+    remplir('boireDe', f.boireDe);
+    remplir('boireA', f.boireA);
+
+    ficheEnCours = Object.fromEntries(CHAMPS_FICHE.map((k) => [k, f[k] ?? '']));
+    afficherFiche(ficheEnCours);
+    statutRecherche('✓ Fiche remplie. Vérifiez, choisissez le nombre de bouteilles, puis enregistrez.');
+  } catch (err) {
+    statutRecherche('La recherche a échoué : ' + err.message, true);
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
+$('#btnSearch').onclick = rechercherVin;
+$('#q').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); rechercherVin(); }
+});
+
 $('#photo').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -454,7 +586,7 @@ $('#btnCancel').onclick = () => $('#dlg').close();
 
 $('#form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const data = lireFormulaire();
+  const data = { ...lireFormulaire(), ...(ficheEnCours || {}) };
   if (!data.domaine && !data.appellation) {
     alert("Indiquez au moins le domaine ou l'appellation.");
     return;
