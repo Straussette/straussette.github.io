@@ -515,6 +515,20 @@ function afficherFiche(f) {
   el.hidden = false;
 }
 
+// Le code d'accès est demandé une fois puis mémorisé sur cet appareil
+function codeAcces() {
+  let code = '';
+  try { code = localStorage.getItem('ma-cave-code') || ''; } catch {}
+  if (!code) {
+    code = (prompt('Code d\'accès pour la recherche :') || '').trim();
+    if (code) { try { localStorage.setItem('ma-cave-code', code); } catch {} }
+  }
+  return code;
+}
+function oublierCode() {
+  try { localStorage.removeItem('ma-cave-code'); } catch {}
+}
+
 async function rechercherVin() {
   let requete = $('#q').value.trim();
   if (!requete) {
@@ -526,16 +540,26 @@ async function rechercherVin() {
     return;
   }
 
+  const code = codeAcces();
+  if (!code) {
+    statutRecherche('Un code d\'accès est nécessaire pour la recherche.', true);
+    return;
+  }
+
   const bouton = $('#btnSearch');
   bouton.disabled = true;
   statutRecherche('Recherche en cours sur internet…', false, true);
   try {
     const r = await fetch(API_RECHERCHE, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-code-acces': code },
       body: JSON.stringify({ requete }),
     });
     const f = await r.json().catch(() => ({}));
+    if (r.status === 401) {
+      oublierCode();
+      throw new Error('code d\'accès incorrect. Relancez la recherche pour le saisir à nouveau.');
+    }
     if (!r.ok) throw new Error(f.erreur || f.message || `Erreur ${r.status}`);
     if (!f.trouve) {
       statutRecherche(f.message || 'Vin introuvable. Essayez avec d\'autres mots.', true);

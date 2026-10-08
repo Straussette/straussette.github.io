@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
   const origine = req.headers.get("origin") ?? "";
   const cors = {
     "Access-Control-Allow-Origin": ORIGINES_AUTORISEES.includes(origine) ? origine : ORIGINES_AUTORISEES[0],
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-code-acces",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Vary": "Origin",
   };
@@ -68,6 +68,13 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return reponse({ erreur: "Méthode non autorisée" }, 405, cors);
   if (!ORIGINES_AUTORISEES.includes(origine)) return reponse({ erreur: "Origine non autorisée" }, 403, cors);
+
+  // Code d'accès : seul celui qui le connaît peut lancer une recherche (et dépenser des crédits)
+  const codeAttendu = Deno.env.get("CODE_ACCES");
+  if (!codeAttendu) return reponse({ erreur: "Secret CODE_ACCES manquant dans Supabase" }, 500, cors);
+  if ((req.headers.get("x-code-acces") ?? "") !== codeAttendu) {
+    return reponse({ erreur: "Code d'accès incorrect", code: "CODE_INVALIDE" }, 401, cors);
+  }
 
   const cle = Deno.env.get("ANTHROPIC_API_KEY");
   if (!cle) return reponse({ erreur: "Secret ANTHROPIC_API_KEY manquant dans Supabase" }, 500, cors);
