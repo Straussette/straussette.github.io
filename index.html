@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-09.4">
+<meta name="app-version" content="2026-10-09.5">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -28,6 +28,7 @@
   }
 
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   body {
     margin:0; background:var(--bg); color:var(--text);
     font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size:16px;
@@ -49,6 +50,8 @@
   .dlg-compte { padding:18px; display:grid; gap:12px; }
   .dlg-compte h2 { margin:0; font-size:1.35rem; }
   .dlg-compte p { margin:0; font-size:.92rem; line-height:1.45; }
+  .liens-compte { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; }
+  .liens-compte .link { padding:0; }
 
   main { padding:16px; }
 
@@ -243,30 +246,38 @@
 
 <dialog id="dlgCompte">
   <form class="dlg-compte" id="formCompte" novalidate>
-    <h2 id="compteTitre">Mon compte</h2>
-    <div id="compteDeconnecte">
-      <div style="display:grid; gap:10px">
-        <p>Connectez-vous pour retrouver votre cave sur tous vos appareils (téléphone, ordinateur…).</p>
-        <label class="f">E-mail
-          <input id="c-email" type="email" autocomplete="username" inputmode="email">
-        </label>
-        <label class="f">Mot de passe (8 caractères minimum)
-          <input id="c-mdp" type="password" autocomplete="current-password" minlength="8">
-        </label>
-      </div>
+    <h2 id="compteTitre">Se connecter</h2>
+    <p id="compteIntro">Connectez-vous pour retrouver votre cave sur tous vos appareils (téléphone, ordinateur…).</p>
+
+    <div id="blocIdentifiants" style="display:grid; gap:10px">
+      <label class="f" id="lblEmail">E-mail
+        <input id="c-email" type="email" autocomplete="username" inputmode="email" autocapitalize="off">
+      </label>
+      <label class="f" id="lblMdp">Mot de passe
+        <input id="c-mdp" type="password" autocomplete="current-password">
+      </label>
+      <label class="f" id="lblMdp2" hidden>Confirmer le mot de passe
+        <input id="c-mdp2" type="password" autocomplete="new-password">
+      </label>
     </div>
+
     <div id="compteConnecte" hidden>
       <p>Connecté en tant que <strong id="c-qui"></strong>.</p>
       <p id="c-sync" style="margin-top:6px"></p>
     </div>
+
     <p class="search-status" id="compteStatut" hidden></p>
+
     <div class="actions">
       <button type="button" class="btn secondary" id="compteFermer">Fermer</button>
       <span class="spacer"></span>
-      <button type="button" class="btn secondary" id="btnInscription">Créer un compte</button>
-      <button type="submit" class="btn primary" id="btnConnexion">Se connecter</button>
       <button type="button" class="btn secondary" id="btnSyncMaintenant" hidden>Synchroniser</button>
       <button type="button" class="btn danger" id="btnDeconnexion" hidden>Se déconnecter</button>
+      <button type="submit" class="btn primary" id="btnValiderCompte">Se connecter</button>
+    </div>
+    <div class="liens-compte" id="liensCompte">
+      <button type="button" class="link" id="lienOubli">Mot de passe oublié ?</button>
+      <button type="button" class="link" id="lienMode">Pas encore de compte ? Créer un compte</button>
     </div>
   </form>
 </dialog>
@@ -1309,16 +1320,43 @@ function compteStatut(txt, erreur = false, enCours = false) {
   el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
 }
 
+// Modes de la fenêtre : connexion, inscription, oubli (demande de lien), nouveau (choix du nouveau mot de passe), compte (connecté)
+let modeCompte = 'connexion';
+
 function afficherCompte(message) {
   const co = !!session;
   $('#btnCompte').textContent = co ? `${etatSync || '👤'} ${session.user.email.split('@')[0]}` : '👤 Se connecter';
-  $('#compteDeconnecte').hidden = co;
-  $('#compteConnecte').hidden = !co;
-  $('#btnConnexion').hidden = co;
-  $('#btnInscription').hidden = co;
-  $('#btnSyncMaintenant').hidden = !co;
-  $('#btnDeconnexion').hidden = !co;
-  if (co) {
+  if (co && modeCompte !== 'nouveau') modeCompte = 'compte';
+  if (!co && (modeCompte === 'compte' || modeCompte === 'nouveau')) modeCompte = 'connexion';
+  const m = modeCompte;
+  const textes = {
+    connexion: ['Se connecter', 'Connectez-vous pour retrouver votre cave sur tous vos appareils (téléphone, ordinateur…).', 'Se connecter'],
+    inscription: ['Créer un compte', 'Choisissez un mot de passe d\'au moins 8 caractères. Un e-mail de confirmation vous sera envoyé.', 'Créer mon compte'],
+    oubli: ['Mot de passe oublié', 'Indiquez votre e-mail : vous recevrez un lien pour choisir un nouveau mot de passe.', 'Envoyer le lien'],
+    nouveau: ['Nouveau mot de passe', 'Choisissez votre nouveau mot de passe (8 caractères minimum).', 'Enregistrer'],
+    compte: ['Mon compte', '', ''],
+  }[m];
+  $('#compteTitre').textContent = textes[0];
+  $('#compteIntro').textContent = textes[1];
+  $('#compteIntro').hidden = !textes[1];
+  $('#btnValiderCompte').textContent = textes[2];
+  $('#btnValiderCompte').hidden = m === 'compte';
+
+  $('#blocIdentifiants').hidden = m === 'compte';
+  $('#lblEmail').hidden = m === 'nouveau';
+  $('#lblMdp').hidden = m === 'oubli';
+  $('#lblMdp2').hidden = !(m === 'inscription' || m === 'nouveau');
+  $('#lblMdp').firstChild.textContent = m === 'nouveau' ? 'Nouveau mot de passe' : 'Mot de passe';
+  $('#c-mdp').autocomplete = (m === 'inscription' || m === 'nouveau') ? 'new-password' : 'current-password';
+
+  $('#compteConnecte').hidden = m !== 'compte';
+  $('#btnSyncMaintenant').hidden = m !== 'compte';
+  $('#btnDeconnexion').hidden = m !== 'compte';
+  $('#liensCompte').hidden = !(m === 'connexion' || m === 'inscription' || m === 'oubli');
+  $('#lienOubli').hidden = m !== 'connexion';
+  $('#lienMode').textContent = m === 'connexion' ? 'Pas encore de compte ? Créer un compte' : '← Retour à la connexion';
+
+  if (m === 'compte') {
     $('#c-qui').textContent = session.user.email;
     $('#c-sync').textContent = {
       '⏳': '⏳ Synchronisation en cours…',
@@ -1329,53 +1367,144 @@ function afficherCompte(message) {
   if (message) compteStatut(message, true);
 }
 
-async function connexion(inscription) {
+function changerMode(m) {
+  modeCompte = m;
+  compteStatut('');
+  $('#c-mdp').value = '';
+  $('#c-mdp2').value = '';
+  afficherCompte();
+}
+
+const adresseApp = () => location.origin + location.pathname;
+
+function messageErreur(e) {
+  const t = (e.message || '') + ' ' + (e.code || '');
+  if (/not.confirmed|email_not_confirmed/i.test(t)) return 'Adresse e-mail pas encore confirmée : cliquez sur le lien reçu par e-mail.';
+  if (/invalid login|invalid_credentials/i.test(t)) return 'E-mail ou mot de passe incorrect. Utilisez « Mot de passe oublié ? » si besoin.';
+  if (/already registered|user_already_exists/i.test(t)) return 'Un compte existe déjà avec cet e-mail : connectez-vous.';
+  if (/rate limit|over_email_send_rate_limit|too many/i.test(t)) return 'Trop d\'e-mails envoyés récemment. Réessayez dans une heure.';
+  if (/same_password|different from the old/i.test(t)) return 'Le nouveau mot de passe doit être différent de l\'ancien.';
+  if (/weak_password|password should/i.test(t)) return 'Mot de passe trop faible : choisissez-en un plus long.';
+  return 'Échec : ' + e.message;
+}
+
+async function validerCompte() {
+  const m = modeCompte;
   const email = $('#c-email').value.trim();
   const password = $('#c-mdp').value;
-  if (!/^\S+@\S+\.\S+$/.test(email)) return compteStatut('Indiquez une adresse e-mail valide.', true);
-  if (password.length < 8) return compteStatut('Le mot de passe doit faire au moins 8 caractères.', true);
-  compteStatut(inscription ? 'Création du compte…' : 'Connexion…', false, true);
+  const password2 = $('#c-mdp2').value;
+
+  if (m !== 'nouveau' && !/^\S+@\S+\.\S+$/.test(email)) return compteStatut('Indiquez une adresse e-mail valide.', true);
+  if (m !== 'oubli' && password.length < 8) return compteStatut('Le mot de passe doit faire au moins 8 caractères.', true);
+  if ((m === 'inscription' || m === 'nouveau') && password !== password2) return compteStatut('Les deux mots de passe ne sont pas identiques.', true);
+
   try {
-    if (inscription) {
-      const r = await sbFetch('/auth/v1/signup?redirect_to=' + encodeURIComponent(location.origin + location.pathname), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+    if (m === 'oubli') {
+      compteStatut('Envoi du lien…', false, true);
+      await sbFetch('/auth/v1/recover?redirect_to=' + encodeURIComponent(adresseApp()), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+      }, false);
+      compteStatut('E-mail envoyé (s\'il existe un compte à cette adresse). Ouvrez le lien qu\'il contient pour choisir un nouveau mot de passe.');
+      return;
+    }
+
+    if (m === 'nouveau') {
+      compteStatut('Enregistrement…', false, true);
+      await sbFetch('/auth/v1/user', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+      });
+      $('#c-mdp').value = ''; $('#c-mdp2').value = '';
+      modeCompte = 'compte';
+      afficherCompte();
+      compteStatut('✓ Mot de passe changé. Utilisez-le désormais sur tous vos appareils.');
+      await premiereConnexion();
+      return;
+    }
+
+    if (m === 'inscription') {
+      compteStatut('Création du compte…', false, true);
+      const r = await sbFetch('/auth/v1/signup?redirect_to=' + encodeURIComponent(adresseApp()), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }),
       }, false);
       if (!r || !r.access_token) {
-        compteStatut('Compte créé ! Ouvrez l\'e-mail de confirmation reçu, cliquez sur le lien, puis revenez ici pour vous connecter.');
+        $('#c-mdp').value = ''; $('#c-mdp2').value = '';
+        modeCompte = 'connexion';
+        afficherCompte();
+        compteStatut('Compte créé ! Ouvrez l\'e-mail de confirmation reçu, cliquez sur le lien, puis connectez-vous ici.');
         return;
       }
       ouvrirSession(r);
     } else {
+      compteStatut('Connexion…', false, true);
       const r = await sbFetch('/auth/v1/token?grant_type=password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }),
       }, false);
       ouvrirSession(r);
     }
-    $('#c-mdp').value = '';
+    $('#c-mdp').value = ''; $('#c-mdp2').value = '';
     compteStatut('Connecté. Récupération de votre cave…', false, true);
     afficherCompte();
     await premiereConnexion();
     compteStatut('✓ Votre cave est synchronisée.');
   } catch (e) {
-    const msg = /confirm/i.test(e.message) || e.code === 'email_not_confirmed'
-      ? 'Adresse e-mail pas encore confirmée : cliquez sur le lien reçu par e-mail.'
-      : /invalid login|invalid_credentials/i.test(e.message + e.code)
-        ? 'E-mail ou mot de passe incorrect.'
-        : /already registered|user_already_exists/i.test(e.message + e.code)
-          ? 'Un compte existe déjà avec cet e-mail : utilisez « Se connecter ».'
-          : 'Échec : ' + e.message;
-    compteStatut(msg, true);
+    compteStatut(messageErreur(e), true);
   }
 }
 
-$('#btnCompte').onclick = () => { compteStatut(''); afficherCompte(); $('#dlgCompte').showModal(); };
+// Retour depuis un lien reçu par e-mail (confirmation d'inscription ou mot de passe oublié)
+async function traiterLienEmail() {
+  if (!location.hash || location.hash.length < 2) return;
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (!h.get('access_token') && !h.get('error')) return;
+  history.replaceState(null, '', location.pathname + location.search); // on retire les jetons de l'adresse
+  $('#dlgCompte').showModal();
+  if (h.get('error')) {
+    modeCompte = session ? 'compte' : (h.get('error_code') === 'otp_expired' ? 'oubli' : 'connexion');
+    afficherCompte();
+    compteStatut(h.get('error_code') === 'otp_expired'
+      ? 'Ce lien a expiré ou a déjà servi. Demandez-en un nouveau.'
+      : 'Lien invalide : ' + (h.get('error_description') || h.get('error')), true);
+    return;
+  }
+  try {
+    const tok = h.get('access_token');
+    const user = await fetch(SB_URL + '/auth/v1/user', { headers: { apikey: SB_CLE, Authorization: 'Bearer ' + tok } }).then((r) => r.json());
+    ouvrirSession({
+      access_token: tok,
+      refresh_token: h.get('refresh_token'),
+      expires_at: Number(h.get('expires_at')) || undefined,
+      expires_in: Number(h.get('expires_in')) || 3600,
+      user,
+    });
+    if (h.get('type') === 'recovery') {
+      modeCompte = 'nouveau';
+      afficherCompte();
+      compteStatut('');
+      setTimeout(() => $('#c-mdp').focus(), 50);
+    } else {
+      modeCompte = 'compte';
+      afficherCompte();
+      compteStatut('✓ Adresse confirmée, vous êtes connecté. Récupération de votre cave…', false, true);
+      await premiereConnexion();
+      compteStatut('✓ Votre cave est synchronisée.');
+    }
+  } catch (e) {
+    modeCompte = 'connexion';
+    afficherCompte();
+    compteStatut('Ce lien n\'a pas pu être utilisé. Connectez-vous ou demandez un nouveau lien.', true);
+  }
+}
+
+$('#btnCompte').onclick = () => {
+  compteStatut('');
+  if (!session) modeCompte = 'connexion';
+  afficherCompte();
+  $('#dlgCompte').showModal();
+};
 $('#compteFermer').onclick = () => $('#dlgCompte').close();
-$('#formCompte').addEventListener('submit', (e) => { e.preventDefault(); connexion(false); });
-$('#btnInscription').onclick = () => connexion(true);
+$('#formCompte').addEventListener('submit', (e) => { e.preventDefault(); validerCompte(); });
+$('#lienOubli').onclick = () => changerMode('oubli');
+$('#lienMode').onclick = () => changerMode(modeCompte === 'connexion' ? 'inscription' : 'connexion');
 $('#btnSyncMaintenant').onclick = async () => {
   compteStatut('Synchronisation…', false, true);
   await synchroniser({ telecharger: true });
@@ -1389,10 +1518,15 @@ $('#btnDeconnexion').onclick = async () => {
   fermerSession();
   bottles = [];
   await sauverLocal();
+  modeCompte = 'connexion';
   afficher();
   afficherCompte();
   compteStatut('Déconnecté.');
 };
+
+window.addEventListener('hashchange', () => {
+  if (/access_token|error_code/.test(location.hash)) traiterLienEmail();
+});
 
 // Quand on revient sur l'app, on récupère les changements faits ailleurs
 document.addEventListener('visibilitychange', () => {
@@ -1424,7 +1558,8 @@ if (location.protocol.startsWith('http')) {
   bottles = await charger();
   afficher();
   afficherCompte();
-  if (session) await synchroniser({ telecharger: true });
+  if (/access_token|error_code/.test(location.hash)) await traiterLienEmail();
+  else if (session) await synchroniser({ telecharger: true });
 })();
 </script>
 </body>
