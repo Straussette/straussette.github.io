@@ -81,6 +81,30 @@ function extraireJSON(texte: string) {
   return JSON.parse(texte.slice(debut, fin + 1));
 }
 
+// Vérifie que la requête vient d'un utilisateur connecté inscrit dans la table « membres »
+async function estMembre(req: Request): Promise<boolean> {
+  const jeton = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!jeton || jeton.split(".").length !== 3) return false;
+  const url = Deno.env.get("SUPABASE_URL");
+  let cle = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  try {
+    cle = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") ?? "{}").default ?? cle;
+  } catch { /* on garde la clé anon */ }
+  if (!url || !cle) return false;
+  try {
+    // La table membres n'est lisible que par l'utilisateur concerné (RLS) :
+    // si la ligne revient, le jeton est valide ET l'utilisateur est membre.
+    const r = await fetch(`${url}/rest/v1/membres?select=user_id&limit=1`, {
+      headers: { apikey: cle, Authorization: `Bearer ${jeton}` },
+    });
+    if (!r.ok) return false;
+    const lignes = await r.json();
+    return Array.isArray(lignes) && lignes.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function detecter(
   cle: string,
   image: { media_type: string; data: string },
@@ -138,11 +162,11 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return reponse({ erreur: "Méthode non autorisée" }, 405, cors);
   if (!ORIGINES_AUTORISEES.includes(origine)) return reponse({ erreur: "Origine non autorisée" }, 403, cors);
 
-  // Code d'accès : seul celui qui le connaît peut lancer une recherche (et dépenser des crédits)
+  // Accès : soit un membre connecté (compte autorisé), soit le code d'accès
   const codeAttendu = Deno.env.get("CODE_ACCES");
-  if (!codeAttendu) return reponse({ erreur: "Secret CODE_ACCES manquant dans Supabase" }, 500, cors);
-  if ((req.headers.get("x-code-acces") ?? "") !== codeAttendu) {
-    return reponse({ erreur: "Code d'accès incorrect", code: "CODE_INVALIDE" }, 401, cors);
+  const codeOk = !!codeAttendu && (req.headers.get("x-code-acces") ?? "") === codeAttendu;
+  if (!codeOk && !(await estMembre(req))) {
+    return reponse({ erreur: "Accès refusé : connectez-vous avec un compte autorisé", code: "CODE_INVALIDE" }, 401, cors);
   }
 
   const cle = Deno.env.get("ANTHROPIC_API_KEY");

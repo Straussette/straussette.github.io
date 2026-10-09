@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-09.3">
+<meta name="app-version" content="2026-10-09.4">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -40,6 +40,15 @@
   h1, h2 { font-family:Georgia, "Times New Roman", serif; font-weight:600; }
   h1 { margin:0; font-size:1.8rem; }
   .stats { margin:4px 0 0; opacity:.85; font-size:.95rem; }
+  .top .wrap { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .compte {
+    flex:none; background:rgba(255,255,255,.16); color:var(--on-accent); border:0; border-radius:999px;
+    padding:7px 12px; font:inherit; font-size:.85rem; cursor:pointer; white-space:nowrap; max-width:46vw;
+    overflow:hidden; text-overflow:ellipsis;
+  }
+  .dlg-compte { padding:18px; display:grid; gap:12px; }
+  .dlg-compte h2 { margin:0; font-size:1.35rem; }
+  .dlg-compte p { margin:0; font-size:.92rem; line-height:1.45; }
 
   main { padding:16px; }
 
@@ -188,8 +197,11 @@
 
 <header class="top">
   <div class="wrap">
-    <h1>Ma Cave</h1>
-    <p class="stats" id="stats"></p>
+    <div>
+      <h1>Ma Cave</h1>
+      <p class="stats" id="stats"></p>
+    </div>
+    <button class="compte" id="btnCompte">👤 Se connecter</button>
   </div>
 </header>
 
@@ -228,6 +240,36 @@
   <button class="fab" id="btnAdd">+ Ajouter une bouteille</button>
   <button class="fab alt" id="btnLot" aria-label="Ajouter plusieurs bouteilles en photo">📸 En lot</button>
 </div>
+
+<dialog id="dlgCompte">
+  <form class="dlg-compte" id="formCompte" novalidate>
+    <h2 id="compteTitre">Mon compte</h2>
+    <div id="compteDeconnecte">
+      <div style="display:grid; gap:10px">
+        <p>Connectez-vous pour retrouver votre cave sur tous vos appareils (téléphone, ordinateur…).</p>
+        <label class="f">E-mail
+          <input id="c-email" type="email" autocomplete="username" inputmode="email">
+        </label>
+        <label class="f">Mot de passe (8 caractères minimum)
+          <input id="c-mdp" type="password" autocomplete="current-password" minlength="8">
+        </label>
+      </div>
+    </div>
+    <div id="compteConnecte" hidden>
+      <p>Connecté en tant que <strong id="c-qui"></strong>.</p>
+      <p id="c-sync" style="margin-top:6px"></p>
+    </div>
+    <p class="search-status" id="compteStatut" hidden></p>
+    <div class="actions">
+      <button type="button" class="btn secondary" id="compteFermer">Fermer</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn secondary" id="btnInscription">Créer un compte</button>
+      <button type="submit" class="btn primary" id="btnConnexion">Se connecter</button>
+      <button type="button" class="btn secondary" id="btnSyncMaintenant" hidden>Synchroniser</button>
+      <button type="button" class="btn danger" id="btnDeconnexion" hidden>Se déconnecter</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="dlgLot">
   <div class="lot">
@@ -386,6 +428,7 @@ async function enregistrer() {
   } catch (e) {
     alert("Impossible d'enregistrer sur cet appareil : " + e.message);
   }
+  planifierSync();
 }
 
 /* ---------- Outils ---------- */
@@ -623,6 +666,7 @@ function afficherFiche(f) {
 
 // Le code d'accès est demandé une fois puis mémorisé sur cet appareil
 function codeAcces() {
+  if (session) return 'compte'; // connecté : le compte sert d'autorisation
   let code = '';
   try { code = localStorage.getItem('ma-cave-code') || ''; } catch {}
   if (!code) {
@@ -637,13 +681,14 @@ function oublierCode() {
 
 // Appel à la fonction Supabase (recherche ou détection), avec gestion du code d'accès
 async function appelerAPI(corps, code) {
-  const r = await fetch(API_RECHERCHE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-code-acces': code },
-    body: JSON.stringify(corps),
-  });
+  const entetes = { 'Content-Type': 'application/json' };
+  const tok = session ? await jeton() : null;
+  if (tok) entetes.Authorization = 'Bearer ' + tok;
+  else entetes['x-code-acces'] = code;
+  const r = await fetch(API_RECHERCHE, { method: 'POST', headers: entetes, body: JSON.stringify(corps) });
   const f = await r.json().catch(() => ({}));
   if (r.status === 401) {
+    if (tok) throw new Error('votre compte n\'est pas encore autorisé à utiliser la recherche.');
     oublierCode();
     throw new Error('code d\'accès incorrect. Réessayez pour le saisir à nouveau.');
   }
@@ -742,7 +787,7 @@ $('#form').addEventListener('submit', async (e) => {
   if (editingId) {
     const b = bottles.find((x) => x.id === editingId);
     Object.assign(b, data);
-    if (pendingPhoto) b.photo = pendingPhoto;
+    if (pendingPhoto) { b.photo = pendingPhoto; b.photo_path = ''; }
   } else {
     // Même domaine + cuvée + appellation + millésime déjà en cave ? On propose de cumuler.
     const existant = bottles.find((b) => cleVin(b) === cleVin(data));
@@ -1029,6 +1074,331 @@ $('#importFile').addEventListener('change', async (e) => {
   }
 });
 
+/* =========================================================
+   Comptes et synchronisation (Supabase)
+   La cave reste aussi enregistrée sur l'appareil : l'app marche hors ligne
+   et envoie les changements dès que possible.
+   ========================================================= */
+const SB_URL = 'https://axioguzxjiowpyvqmobo.supabase.co';
+const SB_CLE = 'sb_publishable_1zThHMEkk0F0qu_fn5J8wQ_Tbnmb5Jq'; // clé publique (sans danger dans la page)
+
+let session = lireLocal('ma-cave-session'); // { access_token, refresh_token, expires_at, user: { id, email } }
+let etatSync = '';
+let syncEnCours = null;
+let syncMinuteur = null;
+
+function lireLocal(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } }
+function ecrireLocal(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+
+async function sbFetch(chemin, options = {}, avecCompte = true) {
+  const entetes = { apikey: SB_CLE, ...(options.headers || {}) };
+  const tok = avecCompte && session ? await jeton() : null;
+  if (tok) entetes.Authorization = 'Bearer ' + tok;
+  const r = await fetch(SB_URL + chemin, { ...options, headers: entetes });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    const err = new Error(e.msg || e.error_description || e.message || e.error || `Erreur ${r.status}`);
+    err.status = r.status;
+    err.code = e.error_code || e.code;
+    throw err;
+  }
+  return r.status === 204 ? null : r.json().catch(() => null);
+}
+
+function ouvrirSession(s) {
+  session = {
+    access_token: s.access_token,
+    refresh_token: s.refresh_token,
+    expires_at: s.expires_at || Math.floor(Date.now() / 1000) + (s.expires_in || 3600),
+    user: { id: s.user.id, email: s.user.email },
+  };
+  ecrireLocal('ma-cave-session', session);
+}
+
+// Jeton de connexion valide (renouvelé automatiquement s'il expire)
+async function jeton() {
+  if (!session) return null;
+  if (session.expires_at * 1000 - Date.now() > 60_000) return session.access_token;
+  const r = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+    method: 'POST',
+    headers: { apikey: SB_CLE, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: session.refresh_token }),
+  }).catch(() => null);
+  if (!r) return session.access_token; // hors ligne : on réessaiera plus tard
+  if (!r.ok) {
+    fermerSession();
+    afficherCompte('Votre session a expiré, reconnectez-vous.');
+    return null;
+  }
+  ouvrirSession(await r.json());
+  return session.access_token;
+}
+
+function fermerSession() {
+  session = null;
+  ecrireLocal('ma-cave-session', null);
+}
+
+const cleSync = () => 'ma-cave-sync-' + session.user.id;
+
+// Ce qui part dans la base : tout sauf la photo (stockée à part)
+function versLigne(b) {
+  const { photo, photo_path, ...data } = b;
+  return { id: b.id, data, photo_path: photo_path || null };
+}
+
+function dataUrlVersBlob(u) { return fetch(u).then((r) => r.blob()); }
+
+function planifierSync() {
+  if (!session) return;
+  clearTimeout(syncMinuteur);
+  syncMinuteur = setTimeout(() => synchroniser(), 600);
+}
+
+// Envoie les changements locaux, puis (si demandé) récupère la cave du compte
+async function synchroniser({ telecharger = false } = {}) {
+  if (!session) return;
+  if (syncEnCours) { await syncEnCours; if (!telecharger) return; }
+  syncEnCours = (async () => {
+    try {
+      etatSync = '⏳';
+      afficherCompte();
+      const uid = session.user.id;
+      const deja = lireLocal(cleSync()) || {}; // id -> empreinte de la dernière version envoyée
+
+      // 1) Photos nouvelles ou modifiées
+      for (const b of bottles) {
+        if (b.photo && b.photo.startsWith('data:') && !b.photo_path) {
+          const chemin = `${uid}/${b.id}.jpg`;
+          await sbFetch(`/storage/v1/object/photos/${chemin}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'image/jpeg', 'x-upsert': 'true' },
+            body: await dataUrlVersBlob(b.photo),
+          });
+          b.photo_path = chemin;
+        }
+      }
+
+      // 2) Bouteilles ajoutées ou modifiées
+      const lignes = bottles.map(versLigne);
+      const aEnvoyer = lignes.filter((l) => deja[l.id] !== JSON.stringify(l));
+      for (let i = 0; i < aEnvoyer.length; i += 200) {
+        await sbFetch('/rest/v1/bouteilles?on_conflict=id', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify(aEnvoyer.slice(i, i + 200)),
+        });
+      }
+
+      // 3) Bouteilles supprimées sur cet appareil
+      const presents = new Set(bottles.map((b) => b.id));
+      const supprimes = Object.keys(deja).filter((id) => !presents.has(id));
+      if (supprimes.length) {
+        await sbFetch(`/rest/v1/bouteilles?id=in.(${supprimes.map((id) => `"${id}"`).join(',')})`, { method: 'DELETE' });
+        await sbFetch('/storage/v1/object/photos', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prefixes: supprimes.map((id) => `${uid}/${id}.jpg`) }),
+        }).catch(() => {});
+      }
+
+      const empreintes = Object.fromEntries(lignes.map((l) => [l.id, JSON.stringify(l)]));
+      ecrireLocal(cleSync(), empreintes);
+
+      // 4) Récupération de la cave du compte (autres appareils)
+      if (telecharger) await recupererCompte(empreintes);
+
+      await sauverLocal();
+      etatSync = '☁️';
+    } catch (e) {
+      console.warn('Synchronisation', e);
+      etatSync = e.status === 401 ? '' : '⚠️';
+    } finally {
+      afficherCompte();
+    }
+  })();
+  await syncEnCours;
+  syncEnCours = null;
+}
+
+async function recupererCompte(empreintes) {
+  const lignes = await sbFetch('/rest/v1/bouteilles?select=id,data,photo_path');
+  const locales = new Map(bottles.map((b) => [b.id, b]));
+  const chemins = lignes.map((l) => l.photo_path).filter(Boolean);
+  const liens = {};
+  for (let i = 0; i < chemins.length; i += 100) {
+    const res = await sbFetch('/storage/v1/object/sign/photos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 7, paths: chemins.slice(i, i + 100) }),
+    }).catch(() => []);
+    for (const x of res || []) if (x.signedURL) liens[x.path] = SB_URL + '/storage/v1' + x.signedURL;
+  }
+  bottles = lignes.map((l) => {
+    const locale = locales.get(l.id);
+    const garderLocale = locale && locale.photo_path === l.photo_path && locale.photo?.startsWith('data:');
+    return {
+      ...l.data,
+      id: l.id,
+      photo_path: l.photo_path,
+      photo: garderLocale ? locale.photo : (liens[l.photo_path] || null),
+    };
+  });
+  const nouvelles = Object.fromEntries(bottles.map((b) => { const l = versLigne(b); return [l.id, JSON.stringify(l)]; }));
+  Object.assign(empreintes, nouvelles);
+  for (const id of Object.keys(empreintes)) if (!nouvelles[id]) delete empreintes[id];
+  ecrireLocal(cleSync(), empreintes);
+  afficher();
+}
+
+// Enregistre sur l'appareil sans relancer de synchronisation
+async function sauverLocal() {
+  try {
+    const db = await dbPromise;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(bottles, 'bottles');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {}
+}
+
+// Première connexion sur cet appareil : on fusionne la cave locale avec celle du compte
+async function premiereConnexion() {
+  const locales = bottles;
+  const distant = await sbFetch('/rest/v1/bouteilles?select=id,data');
+  const idsDistants = new Set(distant.map((l) => l.id));
+  const aEnvoyer = locales.filter((b) => !idsDistants.has(b.id));
+  if (aEnvoyer.length && confirm(`Ajouter les ${aEnvoyer.length} vin(s) de cet appareil à votre compte ?\n(Sinon, cet appareil affichera seulement la cave du compte.)`)) {
+    // Même vin déjà dans le compte ? On additionne les quantités.
+    const parCle = new Map(distant.map((l) => [cleVin(l.data), l]));
+    const nouvelles = [];
+    const jumelles = new Map(); // vins déjà dans le compte dont on augmente la quantité
+    for (const b of aEnvoyer) {
+      const twin = parCle.get(cleVin(b));
+      if (twin) {
+        twin.data.quantite = (Number(twin.data.quantite) || 0) + b.quantite;
+        jumelles.set(twin.id, { id: twin.id, data: twin.data });
+      } else {
+        nouvelles.push(b);
+      }
+    }
+    const majJumelles = [...jumelles.values()];
+    if (majJumelles.length) {
+      await sbFetch('/rest/v1/bouteilles?on_conflict=id', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(majJumelles),
+      });
+    }
+    bottles = nouvelles;
+    ecrireLocal(cleSync(), {}); // tout ce qui reste est à envoyer
+  } else {
+    bottles = [];
+    ecrireLocal(cleSync(), {});
+  }
+  await synchroniser({ telecharger: true });
+}
+
+/* ---------- Fenêtre « Mon compte » ---------- */
+function compteStatut(txt, erreur = false, enCours = false) {
+  const el = $('#compteStatut');
+  el.hidden = !txt;
+  el.className = 'search-status' + (erreur ? ' err' : '');
+  el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
+}
+
+function afficherCompte(message) {
+  const co = !!session;
+  $('#btnCompte').textContent = co ? `${etatSync || '👤'} ${session.user.email.split('@')[0]}` : '👤 Se connecter';
+  $('#compteDeconnecte').hidden = co;
+  $('#compteConnecte').hidden = !co;
+  $('#btnConnexion').hidden = co;
+  $('#btnInscription').hidden = co;
+  $('#btnSyncMaintenant').hidden = !co;
+  $('#btnDeconnexion').hidden = !co;
+  if (co) {
+    $('#c-qui').textContent = session.user.email;
+    $('#c-sync').textContent = {
+      '⏳': '⏳ Synchronisation en cours…',
+      '☁️': '☁️ Cave synchronisée avec votre compte.',
+      '⚠️': '⚠️ Synchronisation impossible pour l\'instant (hors ligne ?). Vos changements sont gardés sur cet appareil et partiront plus tard.',
+    }[etatSync] || '';
+  }
+  if (message) compteStatut(message, true);
+}
+
+async function connexion(inscription) {
+  const email = $('#c-email').value.trim();
+  const password = $('#c-mdp').value;
+  if (!/^\S+@\S+\.\S+$/.test(email)) return compteStatut('Indiquez une adresse e-mail valide.', true);
+  if (password.length < 8) return compteStatut('Le mot de passe doit faire au moins 8 caractères.', true);
+  compteStatut(inscription ? 'Création du compte…' : 'Connexion…', false, true);
+  try {
+    if (inscription) {
+      const r = await sbFetch('/auth/v1/signup?redirect_to=' + encodeURIComponent(location.origin + location.pathname), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      }, false);
+      if (!r || !r.access_token) {
+        compteStatut('Compte créé ! Ouvrez l\'e-mail de confirmation reçu, cliquez sur le lien, puis revenez ici pour vous connecter.');
+        return;
+      }
+      ouvrirSession(r);
+    } else {
+      const r = await sbFetch('/auth/v1/token?grant_type=password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      }, false);
+      ouvrirSession(r);
+    }
+    $('#c-mdp').value = '';
+    compteStatut('Connecté. Récupération de votre cave…', false, true);
+    afficherCompte();
+    await premiereConnexion();
+    compteStatut('✓ Votre cave est synchronisée.');
+  } catch (e) {
+    const msg = /confirm/i.test(e.message) || e.code === 'email_not_confirmed'
+      ? 'Adresse e-mail pas encore confirmée : cliquez sur le lien reçu par e-mail.'
+      : /invalid login|invalid_credentials/i.test(e.message + e.code)
+        ? 'E-mail ou mot de passe incorrect.'
+        : /already registered|user_already_exists/i.test(e.message + e.code)
+          ? 'Un compte existe déjà avec cet e-mail : utilisez « Se connecter ».'
+          : 'Échec : ' + e.message;
+    compteStatut(msg, true);
+  }
+}
+
+$('#btnCompte').onclick = () => { compteStatut(''); afficherCompte(); $('#dlgCompte').showModal(); };
+$('#compteFermer').onclick = () => $('#dlgCompte').close();
+$('#formCompte').addEventListener('submit', (e) => { e.preventDefault(); connexion(false); });
+$('#btnInscription').onclick = () => connexion(true);
+$('#btnSyncMaintenant').onclick = async () => {
+  compteStatut('Synchronisation…', false, true);
+  await synchroniser({ telecharger: true });
+  compteStatut(etatSync === '☁️' ? '✓ À jour.' : 'Synchronisation impossible pour l\'instant.', etatSync !== '☁️');
+};
+$('#btnDeconnexion').onclick = async () => {
+  if (!confirm('Se déconnecter ? Votre cave reste dans votre compte ; elle sera retirée de cet appareil.')) return;
+  await synchroniser(); // on envoie les derniers changements avant de partir
+  const tok = session?.access_token;
+  fetch(SB_URL + '/auth/v1/logout', { method: 'POST', headers: { apikey: SB_CLE, Authorization: 'Bearer ' + tok } }).catch(() => {});
+  fermerSession();
+  bottles = [];
+  await sauverLocal();
+  afficher();
+  afficherCompte();
+  compteStatut('Déconnecté.');
+};
+
+// Quand on revient sur l'app, on récupère les changements faits ailleurs
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && session) synchroniser({ telecharger: true });
+});
+
 /* ---------- Mise à jour automatique ---------- */
 // À l'ouverture, on compare la version affichée avec celle en ligne ;
 // si elle est plus récente, on recharge la page en contournant le cache.
@@ -1053,6 +1423,8 @@ if (location.protocol.startsWith('http')) {
 (async () => {
   bottles = await charger();
   afficher();
+  afficherCompte();
+  if (session) await synchroniser({ telecharger: true });
 })();
 </script>
 </body>
