@@ -80,16 +80,36 @@ Deno.serve(async (req) => {
   if (!cle) return reponse({ erreur: "Secret ANTHROPIC_API_KEY manquant dans Supabase" }, 500, cors);
 
   let requete = "";
+  let image: { media_type: string; data: string } | null = null;
   try {
     const corps = await req.json();
     requete = String(corps.requete ?? "").trim();
+    if (corps.image) {
+      // Photo de l'étiquette envoyée en "data URL" (data:image/jpeg;base64,....)
+      const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(corps.image));
+      if (!m) return reponse({ erreur: "Format de photo non reconnu" }, 400, cors);
+      if (m[2].length > 4_000_000) return reponse({ erreur: "Photo trop lourde" }, 413, cors);
+      image = { media_type: m[1], data: m[2] };
+    }
   } catch {
     return reponse({ erreur: "Requête invalide" }, 400, cors);
   }
-  if (requete.length < 3) return reponse({ erreur: "Décrivez le vin (domaine, appellation, millésime…)" }, 400, cors);
+  if (!image && requete.length < 3) return reponse({ erreur: "Décrivez le vin (domaine, appellation, millésime…) ou prenez l'étiquette en photo" }, 400, cors);
   if (requete.length > 300) requete = requete.slice(0, 300);
 
-  const messages: unknown[] = [{ role: "user", content: `Bouteille à identifier : ${requete}` }];
+  const contenu: unknown[] = [];
+  if (image) {
+    contenu.push({ type: "image", source: { type: "base64", ...image } });
+    contenu.push({
+      type: "text",
+      text: "Voici la photo de l'étiquette. Lis d'abord tout ce qui y figure (domaine, cuvée, appellation, millésime, mentions), puis identifie ce vin précisément avec tes recherches."
+        + (requete ? `\nPrécisions de l'utilisateur : ${requete}` : "")
+        + "\nSi l'étiquette est illisible ou ne montre pas de vin, renvoie trouve: false avec une explication.",
+    });
+  } else {
+    contenu.push({ type: "text", text: `Bouteille à identifier : ${requete}` });
+  }
+  const messages: unknown[] = [{ role: "user", content: contenu }];
 
   try {
     // La recherche web peut demander plusieurs tours (stop_reason "pause_turn")
