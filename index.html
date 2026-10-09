@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-09.2">
+<meta name="app-version" content="2026-10-09.3">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -1037,7 +1037,7 @@ async function verifierMiseAJour() {
     const actuelle = document.querySelector('meta[name="app-version"]').content;
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
     const html = await r.text();
-    const enLigne = (html.match(/name="app-version" content="2026-10-09.2"]+)"/) || [])[1];
+    const enLigne = (html.match(/name="app-version" content="([^"]+)"/) || [])[1];
     if (enLigne && enLigne !== actuelle && sessionStorage.getItem('maj-tentee') !== enLigne) {
       sessionStorage.setItem('maj-tentee', enLigne);
       location.replace(location.pathname + '?v=' + encodeURIComponent(enLigne));
