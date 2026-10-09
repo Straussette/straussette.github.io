@@ -50,6 +50,14 @@
     border:1px solid var(--border); border-radius:10px; padding:10px 12px; width:100%;
   }
   input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .selects { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .group-h {
+    display:flex; justify-content:space-between; align-items:baseline; gap:8px;
+    margin:14px 2px 0; padding-bottom:4px; border-bottom:1px solid var(--border);
+  }
+  .group-h:first-child { margin-top:0; }
+  .group-h h3 { margin:0; font-family:Georgia, "Times New Roman", serif; font-size:1.05rem; font-weight:600; }
+  .group-h span { font-size:.82rem; color:var(--muted); white-space:nowrap; }
   .chips { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; }
   .chip {
     border:1px solid var(--border); background:var(--surface); color:var(--text);
@@ -189,12 +197,21 @@
   <div class="toolbar">
     <input type="search" id="search" placeholder="Rechercher un domaine, une appellation…">
     <div class="chips" id="chips"></div>
-    <select id="sort" aria-label="Trier par">
-      <option value="recent">Ajoutés récemment</option>
-      <option value="aboire">À boire en priorité</option>
-      <option value="domaine">Domaine (A → Z)</option>
-      <option value="millesime">Millésime (du plus ancien)</option>
-    </select>
+    <div class="selects">
+      <select id="group" aria-label="Regrouper par">
+        <option value="aucun">Sans groupes</option>
+        <option value="garde">Boire / garder</option>
+        <option value="producteur">Par producteur</option>
+        <option value="region">Par région</option>
+        <option value="couleur">Par couleur</option>
+      </select>
+      <select id="sort" aria-label="Trier par">
+        <option value="recent">Plus récents</option>
+        <option value="aboire">À boire d'abord</option>
+        <option value="domaine">Domaine A → Z</option>
+        <option value="millesime">Millésime ↑</option>
+      </select>
+    </div>
   </div>
 
   <ul class="list" id="list"></ul>
@@ -470,7 +487,25 @@ function afficher() {
   };
   items.sort(comparateurs[tri]);
 
-  $('#list').innerHTML = items.map(carte).join('');
+  const groupe = $('#group').value;
+  if (groupe === 'aucun') {
+    $('#list').innerHTML = items.map(carte).join('');
+  } else {
+    const groupes = new Map();
+    for (const b of items) {
+      const k = cleGroupe(b, groupe);
+      if (!groupes.has(k.cle)) groupes.set(k.cle, { ...k, vins: [] });
+      groupes.get(k.cle).vins.push(b);
+    }
+    const ordonnes = [...groupes.values()].sort((a, b) =>
+      a.ordre - b.ordre || a.titre.localeCompare(b.titre, 'fr'));
+    $('#list').innerHTML = ordonnes.map((g) => {
+      const n = g.vins.reduce((s, b) => s + b.quantite, 0);
+      const v = g.vins.reduce((s, b) => s + (valeurUnitaire(b) || 0) * b.quantite, 0);
+      return `<li class="group-h"><h3>${esc(g.titre)}</h3><span>${n} bout.${v ? ' · ≈ ' + fmtEuro(v) : ''}</span></li>`
+        + g.vins.map(carte).join('');
+    }).join('');
+  }
 
   const vide = $('#empty');
   if (bottles.length === 0) {
@@ -490,6 +525,28 @@ function afficher() {
     + (valeur ? ` · valeur estimée ≈ ${fmtEuro(valeur)}` : '');
 
   afficherChips();
+}
+
+// Clé de regroupement d'une bouteille (titre affiché + ordre des sections)
+function cleGroupe(b, groupe) {
+  if (groupe === 'producteur') {
+    const t = (b.domaine || '').trim() || 'Producteur inconnu';
+    return { cle: norm(t), titre: t, ordre: b.domaine ? 0 : 1 };
+  }
+  if (groupe === 'region') {
+    const t = (b.region || '').trim() || 'Région inconnue';
+    return { cle: norm(t), titre: t, ordre: b.region ? 0 : 1 };
+  }
+  if (groupe === 'couleur') {
+    const i = COULEURS.indexOf(b.couleur);
+    return { cle: b.couleur || '?', titre: b.couleur || 'Couleur inconnue', ordre: i < 0 ? 99 : i };
+  }
+  // À boire / à garder, d'après la fenêtre de dégustation
+  const st = statut(b);
+  if (!st) return { cle: 'inconnu', titre: 'Fenêtre de dégustation inconnue', ordre: 3 };
+  if (st.cls === 'passe' || st.cls === 'vite') return { cle: 'urgent', titre: 'À boire en priorité', ordre: 0 };
+  if (st.cls === 'ok') return { cle: 'pret', titre: 'Prêt à boire', ordre: 1 };
+  return { cle: 'garder', titre: 'À garder', ordre: 2 };
 }
 
 /* ---------- Formulaire ---------- */
@@ -736,7 +793,17 @@ $('#chips').addEventListener('click', (e) => {
   afficher();
 });
 $('#search').addEventListener('input', afficher);
-$('#sort').addEventListener('change', afficher);
+$('#sort').addEventListener('change', () => { memoriserVue(); afficher(); });
+$('#group').addEventListener('change', () => { memoriserVue(); afficher(); });
+// Le regroupement et le tri choisis sont retenus sur cet appareil
+function memoriserVue() {
+  try { localStorage.setItem('ma-cave-vue', JSON.stringify({ group: $('#group').value, sort: $('#sort').value })); } catch {}
+}
+try {
+  const vue = JSON.parse(localStorage.getItem('ma-cave-vue') || '{}');
+  if (vue.group) $('#group').value = vue.group;
+  if (vue.sort) $('#sort').value = vue.sort;
+} catch {}
 $('#btnAdd').onclick = () => ouvrirFormulaire();
 
 /* ---------- Ajout en lot (plusieurs bouteilles par photo) ---------- */
