@@ -83,7 +83,8 @@ Extrais chaque vin proposé avec son prix. Réponds UNIQUEMENT avec un objet JSO
       "prix": 45.5,
       "prixHT": false,
       "quantiteMax": 12,
-      "remarque": "conditionnement, allocation, etc. ou chaîne vide"
+      "caisse": 6,
+      "remarque": "allocation, conditions particulières, etc. ou chaîne vide"
     }
   ],
   "remarques": "conditions générales utiles (franco, délais, TVA…) ou chaîne vide"
@@ -91,6 +92,7 @@ Extrais chaque vin proposé avec son prix. Réponds UNIQUEMENT avec un objet JSO
 Règles :
 - prix = prix unitaire PAR BOUTEILLE en euros, TTC si les deux sont indiqués. Si seul un prix par carton est donné, divise par le nombre de bouteilles du carton. Si seul le HT est donné, mets ce prix et prixHT: true.
 - millesime, prix, quantiteMax sont des nombres ou null. N'invente rien : si une information n'est pas visible, mets null ou chaîne vide.
+- caisse = nombre de bouteilles par carton / caisse si c'est indiqué (souvent 6 ou 12), sinon null.
 - Une ligne par vin et par format (un magnum est une ligne distincte).
 - Complète la couleur et l'appellation d'après tes connaissances si c'est évident.
 - Ignore les lignes qui ne sont pas des vins (frais de port, totaux…).`;

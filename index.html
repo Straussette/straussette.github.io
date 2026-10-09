@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-09.8">
+<meta name="app-version" content="2026-10-09.9">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -1856,6 +1856,9 @@ function afficherCommande() {
         const parts = c.commande_participants.map((p) => [p, qte(v.id, p.user_id)]).filter(([, q]) => q > 0);
         const maQ = qte(v.id, moi());
         const peutEditerVin = jeSuisOrga || (ouverte && v.ajoute_par === moi());
+        const pas = pasVin(v);
+        const caisse = Number(v.data?.caisse) || 0;
+        const totalVin = parts.reduce((s2, [, q]) => s2 + q, 0);
         return `
         <div class="cmd-vin" data-vin="${esc(v.id)}">
           <div class="ligne">
@@ -1867,13 +1870,25 @@ function afficherCommande() {
           <div class="ligne">
             <div class="lot-qty">
               <span class="petit">Ma part :</span>
-              ${peutChoisir ? `<button type="button" data-act="moins">−</button>` : ''}
+              ${peutChoisir ? `<button type="button" data-act="moins" aria-label="Moins ${pas}">−</button>` : ''}
               <span>${maQ}</span>
-              ${peutChoisir ? `<button type="button" data-act="plus">+</button>` : ''}
+              ${peutChoisir ? `<button type="button" data-act="plus" aria-label="Plus ${pas}">+</button>` : ''}
+              ${pas > 1 ? `<span class="pastille p-neutre">par ${pas}</span>` : ''}
+              ${maQ % pas ? `<span class="pastille p-alerte">pas un multiple de ${pas}</span>` : ''}
             </div>
             ${peutEditerVin ? `<button class="link" data-act="supprimerVin">Retirer ce vin</button>` : ''}
           </div>
-          ${parts.length ? `<div class="petit">${parts.map(([p, q]) => `${esc(p.user_id === moi() ? 'moi' : nomPersonne(p))} ${q}`).join(' · ')}</div>` : ''}
+          ${jeSuisOrga ? `
+          <div class="ligne petit">
+            <label>Caisse de <select data-act="caisse" style="width:auto; padding:4px 8px">
+              ${[0, 1, 2, 3, 6, 12, 24].map((n) => `<option value="${n}" ${n === caisse ? 'selected' : ''}>${n ? n : '—'}</option>`).join('')}
+            </select></label>
+            <label>Choix par <select data-act="pas" style="width:auto; padding:4px 8px">
+              ${[...new Set([1, 2, 3, 6, 12, pas])].sort((a, b) => a - b).map((n) => `<option value="${n}" ${n === pas ? 'selected' : ''}>${n}</option>`).join('')}
+            </select></label>
+          </div>` : ''}
+          ${parts.length ? `<div class="petit">${parts.map(([p, q]) => `${esc(p.user_id === moi() ? 'moi' : nomPersonne(p))} ${q}`).join(' · ')}${parts.length > 1 ? ` · total ${totalVin}` : ''}</div>` : ''}
+          ${caisse > 1 && totalVin ? `<div class="petit">${etatCaisses(totalVin, caisse)}</div>` : ''}
         </div>`;
       }).join('')}
 
@@ -1952,6 +1967,19 @@ function afficherCommande() {
     </div>`;
 }
 
+/* ---------- Caisses et multiples ---------- */
+// Pas de choix : l'organisateur impose par exemple des multiples de 3 ou 6
+const pasVin = (v) => Math.max(1, parseInt(v.data?.pas, 10) || 1);
+
+function etatCaisses(total, caisse) {
+  const pleines = Math.floor(total / caisse);
+  const reste = total % caisse;
+  const txt = `📦 ${pleines ? `${pleines} caisse${pleines > 1 ? 's' : ''} de ${caisse}` : `0 caisse de ${caisse}`}`;
+  return reste
+    ? `${txt} · <strong style="color:var(--vite)">il manque ${caisse - reste} bouteille${caisse - reste > 1 ? 's' : ''} pour compléter la caisse</strong>`
+    : `${txt} · ✓ caisses complètes`;
+}
+
 /* ---------- Import d'une proposition (photo, PDF, tableau) ---------- */
 let propale = null; // { cmdId, fournisseur, remarques, vins: [{ ...data, prix, coche }] }
 
@@ -1973,6 +2001,7 @@ function propaleHTML(c) {
               ${v.prixHT ? '<span class="pastille p-alerte">prix HT</span>' : ''}
               ${v.prix == null ? '<span class="pastille p-alerte">prix à compléter</span>' : ''}
               ${v.quantiteMax ? `<span>max ${esc(v.quantiteMax)} bout.</span>` : ''}
+              ${Number(v.caisse) > 1 ? `<span>caisse de ${esc(v.caisse)}</span>` : ''}
               ${v.remarque ? `<span>${esc(v.remarque)}</span>` : ''}
             </div>
           </div>
@@ -2090,6 +2119,15 @@ $('#cmdContenu').addEventListener('change', (e) => {
     }
     actionCommande(() => jsonPatch(`/rest/v1/commandes?id=eq.${c.id}`, { statut: nouveau }));
   }
+  if (act === 'caisse' || act === 'pas') {
+    const vinId = e.target.closest('[data-vin]').dataset.vin;
+    const v = c.commande_vins.find((x) => x.id === vinId);
+    const n = parseInt(e.target.value, 10) || 0;
+    const data = { ...(v.data || {}) };
+    if (act === 'caisse') { if (n) data.caisse = n; else delete data.caisse; }
+    else { if (n > 1) data.pas = n; else delete data.pas; }
+    actionCommande(() => jsonPatch(`/rest/v1/commande_vins?id=eq.${vinId}`, { data }));
+  }
   if (act === 'prix') {
     const vinId = e.target.closest('[data-vin]').dataset.vin;
     actionCommande(() => jsonPatch(`/rest/v1/commande_vins?id=eq.${vinId}`, { prix: Math.max(0, Number(e.target.value) || 0) }));
@@ -2131,7 +2169,11 @@ $('#cmdContenu').addEventListener('click', async (e) => {
   }
   if (act === 'plus' || act === 'moins') {
     const actuelle = (c.commande_parts.find((x) => x.vin_id === vinId && x.user_id === moi()) || {}).quantite || 0;
-    const q = Math.max(0, actuelle + (act === 'plus' ? 1 : -1));
+    const pas = pasVin(c.commande_vins.find((x) => x.id === vinId) || {});
+    // On avance au multiple suivant (ou précédent) du pas imposé
+    const q = act === 'plus'
+      ? (Math.floor(actuelle / pas) + 1) * pas
+      : Math.max(0, Math.ceil(actuelle / pas) * pas - pas);
     // Mise à jour immédiate à l'écran, puis enregistrement
     const part = c.commande_parts.find((x) => x.vin_id === vinId && x.user_id === moi());
     if (part) part.quantite = q; else c.commande_parts.push({ vin_id: vinId, commande_id: c.id, user_id: moi(), quantite: q });
@@ -2171,6 +2213,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
         millesime: parseInt(v.millesime, 10) || '', couleur: COULEURS.includes(v.couleur) ? v.couleur : 'Rouge',
         ...(v.format && !/^75/.test(v.format) ? { format: v.format } : {}),
         ...(v.remarque ? { remarque: v.remarque } : {}),
+        ...(Number(v.caisse) > 1 ? { caisse: Number(v.caisse) } : {}),
       },
     }));
     const fournisseur = propale.fournisseur;
