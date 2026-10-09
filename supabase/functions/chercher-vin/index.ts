@@ -81,15 +81,39 @@ function extraireJSON(texte: string) {
   return JSON.parse(texte.slice(debut, fin + 1));
 }
 
-// Vérifie que la requête vient d'un utilisateur connecté inscrit dans la table « membres »
-async function estMembre(req: Request): Promise<boolean> {
-  const jeton = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (!jeton || jeton.split(".").length !== 3) return false;
-  const url = Deno.env.get("SUPABASE_URL");
+function cleSupabase() {
   let cle = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   try {
     cle = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") ?? "{}").default ?? cle;
   } catch { /* on garde la clé anon */ }
+  return cle;
+}
+
+function jetonDe(req: Request) {
+  const jeton = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  return jeton.split(".").length === 3 ? jeton : "";
+}
+
+// Note la recherche dans le journal (pour l'écran d'administration) ; une erreur ici ne bloque rien
+async function noterRecherche(req: Request, mode: string) {
+  const jeton = jetonDe(req);
+  const url = Deno.env.get("SUPABASE_URL");
+  if (!jeton || !url) return;
+  try {
+    await fetch(`${url}/rest/v1/recherches`, {
+      method: "POST",
+      headers: { apikey: cleSupabase(), Authorization: `Bearer ${jeton}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ mode }),
+    });
+  } catch { /* sans importance */ }
+}
+
+// Vérifie que la requête vient d'un utilisateur connecté inscrit dans la table « membres »
+async function estMembre(req: Request): Promise<boolean> {
+  const jeton = jetonDe(req);
+  if (!jeton) return false;
+  const url = Deno.env.get("SUPABASE_URL");
+  const cle = cleSupabase();
   if (!url || !cle) return false;
   try {
     // La table membres n'est lisible que par l'utilisateur concerné (RLS) :
@@ -189,6 +213,8 @@ Deno.serve(async (req) => {
   } catch {
     return reponse({ erreur: "Requête invalide" }, 400, cors);
   }
+  await noterRecherche(req, mode === "detecter" ? "detecter" : (image ? "photo" : "texte"));
+
   if (mode === "detecter") {
     if (!image) return reponse({ erreur: "Photo manquante" }, 400, cors);
     return await detecter(cle, image, cors);

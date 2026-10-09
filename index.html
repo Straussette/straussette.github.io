@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-09.5">
+<meta name="app-version" content="2026-10-09.6">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -122,6 +122,39 @@
   }
   .fab.alt { background:var(--surface); color:var(--accent); border:1px solid var(--border); }
 
+  /* ---------- Onglets ---------- */
+  .onglets { display:flex; gap:6px; padding:10px 16px 0; max-width:720px; margin:0 auto; overflow-x:auto; scrollbar-width:none; }
+  .onglets button {
+    border:0; background:none; color:var(--muted); font:inherit; font-weight:600; padding:8px 12px;
+    border-bottom:2px solid transparent; cursor:pointer; white-space:nowrap;
+  }
+  .onglets button[aria-selected="true"] { color:var(--accent); border-bottom-color:var(--accent); }
+  .vue-titre { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px; }
+  .vue-titre h2 { margin:0; font-size:1.3rem; }
+  .carte-simple {
+    display:grid; gap:6px; padding:12px; background:var(--surface); border:1px solid var(--border);
+    border-radius:14px; box-shadow:var(--shadow); text-align:left; width:100%; font:inherit; color:inherit; cursor:pointer;
+  }
+  .carte-simple .ligne { display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; }
+  .carte-simple strong { font-size:1.02rem; }
+  .petit { font-size:.85rem; color:var(--muted); }
+  .pastille { display:inline-block; font-size:.78rem; font-weight:600; padding:2px 8px; border-radius:999px; color:var(--b); background:color-mix(in srgb, var(--b) 14%, transparent); }
+  .p-ouverte { --b:var(--ok); } .p-commandee { --b:var(--vite); } .p-recue { --b:var(--accent); } .p-neutre { --b:var(--tot); } .p-alerte { --b:var(--passe); }
+  .liste-simple { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+
+  /* ---------- Commande ---------- */
+  .cmd { padding:18px; display:grid; gap:14px; }
+  .cmd h2 { margin:0; font-size:1.35rem; }
+  .cmd h3 { margin:0; font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  .cmd section { display:grid; gap:8px; }
+  .cmd-vin { display:grid; gap:6px; padding:10px; border:1px solid var(--border); border-radius:12px; }
+  .cmd-vin .ligne, .cmd-pers .ligne { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+  .cmd-pers { display:grid; gap:6px; padding:10px; border:1px solid var(--border); border-radius:12px; }
+  .cmd-form { display:grid; gap:8px; padding:12px; border-radius:12px; background:color-mix(in srgb, var(--accent) 6%, var(--surface)); border:1px dashed var(--border); }
+  .prix-input { width:96px; padding:6px 8px; }
+  .btn.petit-btn { padding:6px 10px; font-size:.85rem; }
+  .paiement { white-space:pre-wrap; font-family:ui-monospace, Menlo, monospace; font-size:.85rem; padding:8px; border-radius:8px; background:var(--border); }
+
   /* ---------- Ajout en lot ---------- */
   .lot { padding:18px; display:grid; gap:12px; }
   .lot h2 { margin:0; font-size:1.35rem; }
@@ -190,7 +223,7 @@
   .valeur { font-size:.8rem; color:var(--muted); margin-top:4px; }
 
   @media (max-width:600px) {
-    .lot { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
+    .lot, .cmd { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
     dialog { width:100%; max-width:100%; height:100dvh; max-height:100dvh; border-radius:0; margin:0; }
     form { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
   }
@@ -208,7 +241,13 @@
   </div>
 </header>
 
-<main class="wrap">
+<nav class="onglets" id="onglets" hidden>
+  <button data-vue="cave" aria-selected="true">🍷 Ma cave</button>
+  <button data-vue="commandes" aria-selected="false">📦 Commandes</button>
+  <button data-vue="admin" aria-selected="false" hidden id="ongletAdmin">⚙️ Admin</button>
+</nav>
+
+<main class="wrap" id="vueCave">
   <div class="toolbar">
     <input type="search" id="search" placeholder="Rechercher un domaine, une appellation…">
     <div class="chips" id="chips"></div>
@@ -239,7 +278,31 @@
   </div>
 </main>
 
-<div class="fabs">
+<section class="wrap" id="vueCommandes" hidden style="padding:16px">
+  <div class="vue-titre">
+    <h2>Commandes groupées</h2>
+    <button class="btn primary" id="btnNouvelleCommande">+ Nouvelle</button>
+  </div>
+  <p class="search-status" id="cmdListeStatut" hidden></p>
+  <ul class="liste-simple" id="listeCommandes"></ul>
+  <p class="empty" id="cmdVide" hidden>Aucune commande pour l'instant. Créez-en une, puis partagez son lien à vos amis : chacun y choisit ses bouteilles.</p>
+</section>
+
+<section class="wrap" id="vueAdmin" hidden style="padding:16px">
+  <div class="vue-titre">
+    <h2>Administration</h2>
+    <button class="btn secondary" id="btnAdminRafraichir">Actualiser</button>
+  </div>
+  <p class="petit" id="adminResume"></p>
+  <p class="search-status" id="adminStatut" hidden></p>
+  <ul class="liste-simple" id="listeAdmin" style="margin-top:12px"></ul>
+</section>
+
+<dialog id="dlgCommande">
+  <div class="cmd" id="cmdContenu"></div>
+</dialog>
+
+<div class="fabs" id="fabs">
   <button class="fab" id="btnAdd">+ Ajouter une bouteille</button>
   <button class="fab alt" id="btnLot" aria-label="Ajouter plusieurs bouteilles en photo">📸 En lot</button>
 </div>
@@ -449,7 +512,9 @@ const sansAccent = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u03
 const slug = (s) => sansAccent(s).toLowerCase();
 const norm = (s) => sansAccent(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const cleVin = (b) => [norm(b.domaine), norm(b.cuvee), norm(b.appellation), b.millesime || 'nm'].join('|');
-const nouvelId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+// Identifiant unique au format UUID (aussi sur les navigateurs anciens)
+const nouvelId = () => (crypto.randomUUID ? crypto.randomUUID()
+  : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 
 // Réduit la photo (~1200 px) pour qu'elle prenne peu de place
 function compresser(file, maxPx = 1200, qualite = 0.8) {
@@ -1139,6 +1204,7 @@ async function jeton() {
   if (!r.ok) {
     fermerSession();
     afficherCompte('Votre session a expiré, reconnectez-vous.');
+    majOnglets();
     return null;
   }
   ouvrirSession(await r.json());
@@ -1418,6 +1484,7 @@ async function validerCompte() {
       afficherCompte();
       compteStatut('✓ Mot de passe changé. Utilisez-le désormais sur tous vos appareils.');
       await premiereConnexion();
+      await apresConnexion();
       return;
     }
 
@@ -1446,6 +1513,7 @@ async function validerCompte() {
     afficherCompte();
     await premiereConnexion();
     compteStatut('✓ Votre cave est synchronisée.');
+    await apresConnexion();
   } catch (e) {
     compteStatut(messageErreur(e), true);
   }
@@ -1487,6 +1555,7 @@ async function traiterLienEmail() {
       compteStatut('✓ Adresse confirmée, vous êtes connecté. Récupération de votre cave…', false, true);
       await premiereConnexion();
       compteStatut('✓ Votre cave est synchronisée.');
+      await apresConnexion();
     }
   } catch (e) {
     modeCompte = 'connexion';
@@ -1519,8 +1588,10 @@ $('#btnDeconnexion').onclick = async () => {
   bottles = [];
   await sauverLocal();
   modeCompte = 'connexion';
+  commandes = [];
   afficher();
   afficherCompte();
+  await majOnglets();
   compteStatut('Déconnecté.');
 };
 
@@ -1530,8 +1601,581 @@ window.addEventListener('hashchange', () => {
 
 // Quand on revient sur l'app, on récupère les changements faits ailleurs
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && session) synchroniser({ telecharger: true });
+  if (!document.hidden && session) {
+    synchroniser({ telecharger: true }).then(() => chargerCommandes({ silencieux: true }));
+  }
 });
+
+/* =========================================================
+   Onglets : Ma cave / Commandes / Admin
+   ========================================================= */
+let vueActive = 'cave';
+let estAdmin = false;
+
+function changerVue(v) {
+  vueActive = v;
+  for (const b of document.querySelectorAll('#onglets button')) b.setAttribute('aria-selected', String(b.dataset.vue === v));
+  $('#vueCave').hidden = v !== 'cave';
+  $('#fabs').hidden = v !== 'cave';
+  $('#vueCommandes').hidden = v !== 'commandes';
+  $('#vueAdmin').hidden = v !== 'admin';
+  if (v === 'commandes') chargerCommandes();
+  if (v === 'admin') chargerAdmin();
+}
+$('#onglets').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-vue]');
+  if (b) changerVue(b.dataset.vue);
+});
+
+// Affiche les onglets quand on est connecté, et l'onglet Admin pour l'administrateur
+async function majOnglets() {
+  $('#onglets').hidden = !session;
+  if (!session) { estAdmin = false; $('#ongletAdmin').hidden = true; if (vueActive !== 'cave') changerVue('cave'); return; }
+  try {
+    const r = await sbFetch('/rest/v1/admins?select=user_id&limit=1');
+    estAdmin = Array.isArray(r) && r.length > 0;
+  } catch { estAdmin = false; }
+  $('#ongletAdmin').hidden = !estAdmin;
+}
+
+const fmtEur = (n) => (Number(n) || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+const nomVin = (d) => [d.domaine, d.cuvee, d.appellation, d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom';
+
+function statutGenerique(el, txt, erreur = false, enCours = false) {
+  el.hidden = !txt;
+  el.className = 'search-status' + (erreur ? ' err' : '');
+  el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
+}
+
+/* =========================================================
+   Administration
+   ========================================================= */
+const COUT_RECHERCHE = 0.07; // estimation moyenne en euros
+
+async function chargerAdmin() {
+  statutGenerique($('#adminStatut'), 'Chargement…', false, true);
+  try {
+    const liste = await sbFetch('/rest/v1/rpc/admin_utilisateurs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const totalRech = liste.reduce((s, u) => s + Number(u.recherches_mois), 0);
+    const membres = liste.filter((u) => u.membre).length;
+    const enAttente = liste.filter((u) => !u.membre && u.confirme).length;
+    $('#adminResume').textContent = `${liste.length} compte${liste.length > 1 ? 's' : ''} · ${membres} membre${membres > 1 ? 's' : ''}`
+      + (enAttente ? ` · ${enAttente} en attente` : '')
+      + ` · ${totalRech} recherche${totalRech > 1 ? 's' : ''} ce mois-ci (≈ ${fmtEur(totalRech * COUT_RECHERCHE)})`;
+    $('#listeAdmin').innerHTML = liste.map((u) => `
+      <li class="carte-simple" style="cursor:default">
+        <div class="ligne">
+          <strong>${esc(u.email)}</strong>
+          ${u.admin ? '<span class="pastille p-recue">admin</span>'
+            : u.membre ? '<span class="pastille p-ouverte">membre</span>'
+            : u.confirme ? '<span class="pastille p-commandee">en attente</span>'
+            : '<span class="pastille p-neutre">e-mail non confirmé</span>'}
+        </div>
+        <div class="petit">Inscrit le ${fmtDate(u.inscrit)}${u.derniere_connexion ? ' · vu le ' + fmtDate(u.derniere_connexion) : ''}</div>
+        <div class="petit">${u.nb_bouteilles} bouteille${u.nb_bouteilles > 1 ? 's' : ''} (${u.nb_vins} vin${u.nb_vins > 1 ? 's' : ''}) · ${u.recherches_mois} recherche${u.recherches_mois > 1 ? 's' : ''} ce mois-ci${u.recherches_mois ? ' (≈ ' + fmtEur(u.recherches_mois * COUT_RECHERCHE) + ')' : ''}</div>
+        ${u.admin ? '' : `<div><button class="btn ${u.membre ? 'secondary' : 'primary'} petit-btn" data-membre="${esc(u.user_id)}" data-actif="${u.membre ? '0' : '1'}">
+          ${u.membre ? 'Retirer l\'accès à la recherche' : 'Autoriser la recherche'}</button></div>`}
+      </li>`).join('');
+    statutGenerique($('#adminStatut'), '');
+  } catch (e) {
+    statutGenerique($('#adminStatut'), 'Impossible de charger : ' + e.message, true);
+  }
+}
+$('#btnAdminRafraichir').onclick = chargerAdmin;
+$('#listeAdmin').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-membre]');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    await sbFetch('/rest/v1/rpc/admin_definir_membre', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cible: b.dataset.membre, actif: b.dataset.actif === '1' }),
+    });
+    await chargerAdmin();
+  } catch (err) {
+    statutGenerique($('#adminStatut'), 'Échec : ' + err.message, true);
+    b.disabled = false;
+  }
+});
+
+/* =========================================================
+   Commandes groupées
+   ========================================================= */
+let commandes = [];
+let commandeOuverte = null; // id de la commande affichée
+
+const STATUTS = {
+  ouverte: ['Ouverte', 'p-ouverte', 'Chacun choisit ses bouteilles'],
+  commandee: ['Commandée', 'p-commandee', 'Commande passée, en attente de livraison'],
+  recue: ['Reçue', 'p-recue', 'Livrée chez l\'organisateur'],
+};
+
+const moi = () => session?.user.id;
+const nomPersonne = (p) => p ? (p.pseudo || (p.email || '').split('@')[0] || 'Quelqu\'un') : 'Quelqu\'un';
+const lienCommande = (id) => `${location.origin}${location.pathname}#commande=${id}`;
+
+// Calculs : ce que chacun doit, a payé, déclaré, et ce qu'il reste
+function comptes(c) {
+  const prix = Object.fromEntries(c.commande_vins.map((v) => [v.id, Number(v.prix) || 0]));
+  return c.commande_participants.map((p) => {
+    const parts = c.commande_parts.filter((x) => x.user_id === p.user_id && x.quantite > 0);
+    const du = parts.reduce((s, x) => s + x.quantite * (prix[x.vin_id] || 0), 0);
+    const bouteilles = parts.reduce((s, x) => s + x.quantite, 0);
+    const rembs = c.remboursements.filter((r) => r.debiteur === p.user_id);
+    const confirme = rembs.filter((r) => r.confirme_le).reduce((s, r) => s + Number(r.montant), 0);
+    const declare = rembs.filter((r) => !r.confirme_le).reduce((s, r) => s + Number(r.montant), 0);
+    const orga = p.user_id === c.organisateur;
+    const reste = orga ? 0 : Math.max(0, Math.round((du - confirme - declare) * 100) / 100);
+    return { p, orga, du, bouteilles, confirme, declare, reste, rembs };
+  });
+}
+
+async function chargerCommandes({ silencieux = false } = {}) {
+  if (!session) return;
+  if (!silencieux) statutGenerique($('#cmdListeStatut'), 'Chargement…', false, true);
+  try {
+    commandes = await sbFetch('/rest/v1/commandes?select=*,commande_participants(*),commande_vins(*),commande_parts(*),remboursements(*)&order=cree.desc');
+    for (const c of commandes) c.commande_vins.sort((a, b) => a.cree.localeCompare(b.cree));
+    statutGenerique($('#cmdListeStatut'), '');
+    afficherListeCommandes();
+    if (commandeOuverte) afficherCommande();
+    await integrerCommandesALaCave();
+  } catch (e) {
+    statutGenerique($('#cmdListeStatut'), 'Impossible de charger les commandes : ' + e.message, true);
+  }
+}
+
+function afficherListeCommandes() {
+  $('#cmdVide').hidden = commandes.length > 0;
+  $('#listeCommandes').innerHTML = commandes.map((c) => {
+    const st = STATUTS[c.statut];
+    const cpt = comptes(c);
+    const mien = cpt.find((x) => x.p.user_id === moi());
+    const orga = c.commande_participants.find((p) => p.user_id === c.organisateur);
+    const total = cpt.reduce((s, x) => s + x.du, 0);
+    const aConfirmer = c.organisateur === moi() ? c.remboursements.filter((r) => !r.confirme_le).length : 0;
+    let info = '';
+    if (mien && !mien.orga && mien.reste > 0) info = `<span class="pastille p-alerte">Je dois ${fmtEur(mien.reste)}</span>`;
+    else if (mien && !mien.orga && mien.declare > 0) info = '<span class="pastille p-neutre">Virement en attente de confirmation</span>';
+    if (aConfirmer) info += ` <span class="pastille p-alerte">${aConfirmer} virement${aConfirmer > 1 ? 's' : ''} à confirmer</span>`;
+    if (c.statut === 'recue' && mien && !mien.orga && mien.bouteilles && !mien.p.recupere) info += ' <span class="pastille p-commandee">À récupérer</span>';
+    return `
+      <li><button class="carte-simple" data-commande="${esc(c.id)}">
+        <div class="ligne"><strong>${esc(c.titre)}</strong><span class="pastille ${st[1]}">${st[0]}</span></div>
+        <div class="petit">${esc([c.fournisseur, fmtDate(c.date_commande)].filter(Boolean).join(' · '))}${c.fournisseur || c.date_commande ? ' · ' : ''}organisée par ${esc(c.organisateur === moi() ? 'moi' : nomPersonne(orga))}</div>
+        <div class="petit">${c.commande_participants.length} participant${c.commande_participants.length > 1 ? 's' : ''} · total ${fmtEur(total)}${mien && mien.du ? ' · ma part ' + fmtEur(mien.du) : ''}</div>
+        ${info ? `<div>${info}</div>` : ''}
+      </button></li>`;
+  }).join('');
+}
+$('#listeCommandes').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-commande]');
+  if (b) ouvrirCommande(b.dataset.commande);
+});
+
+function ouvrirCommande(id) {
+  commandeOuverte = id;
+  afficherCommande();
+  if (!$('#dlgCommande').open) $('#dlgCommande').showModal();
+}
+$('#dlgCommande').addEventListener('close', () => { commandeOuverte = null; });
+
+$('#btnNouvelleCommande').onclick = async () => {
+  const titre = (prompt('Nom de la commande (ex. « Primeurs Bourgogne 2026 ») :') || '').trim();
+  if (!titre) return;
+  try {
+    // L'identifiant est choisi ici : pas besoin que la base renvoie la ligne créée
+    const id = nouvelId();
+    await jsonPost('/rest/v1/commandes', { id, titre, date_commande: new Date().toISOString().slice(0, 10) });
+    await chargerCommandes({ silencieux: true });
+    ouvrirCommande(id);
+  } catch (e) {
+    statutGenerique($('#cmdListeStatut'), 'Création impossible : ' + e.message, true);
+  }
+};
+
+function afficherCommande() {
+  const c = commandes.find((x) => x.id === commandeOuverte);
+  const el = $('#cmdContenu');
+  if (!c) { el.innerHTML = '<p>Commande introuvable.</p><div class="actions"><button class="btn secondary" data-act="fermer">Fermer</button></div>'; return; }
+  const jeSuisOrga = c.organisateur === moi();
+  const ouverte = c.statut === 'ouverte';
+  const peutChoisir = ouverte || jeSuisOrga;
+  const st = STATUTS[c.statut];
+  const cpt = comptes(c);
+  const mien = cpt.find((x) => x.p.user_id === moi());
+  const orga = c.commande_participants.find((p) => p.user_id === c.organisateur);
+  const total = cpt.reduce((s, x) => s + x.du, 0);
+  const totalBout = cpt.reduce((s, x) => s + x.bouteilles, 0);
+  const qte = (vinId, userId) => (c.commande_parts.find((x) => x.vin_id === vinId && x.user_id === userId) || {}).quantite || 0;
+
+  el.innerHTML = `
+    <div class="ligne" style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start">
+      <div>
+        <h2>${esc(c.titre)}</h2>
+        <div class="petit">${esc([c.fournisseur, fmtDate(c.date_commande)].filter(Boolean).join(' · '))}</div>
+        <div class="petit">Organisée par ${esc(jeSuisOrga ? 'moi' : nomPersonne(orga))} · ${totalBout} bouteille${totalBout > 1 ? 's' : ''} · ${fmtEur(total)}</div>
+      </div>
+      <span class="pastille ${st[1]}" title="${esc(st[2])}">${st[0]}</span>
+    </div>
+
+    <div class="actions" style="flex-wrap:wrap">
+      <button class="btn primary petit-btn" data-act="partager">🔗 Partager le lien</button>
+      ${jeSuisOrga ? `
+        <select data-act="statut" aria-label="Statut de la commande" style="width:auto">
+          ${Object.entries(STATUTS).map(([k, v]) => `<option value="${k}" ${k === c.statut ? 'selected' : ''}>Statut : ${v[0]}</option>`).join('')}
+        </select>
+        <button class="btn secondary petit-btn" data-act="editer">✏️ Infos</button>` : ''}
+    </div>
+
+    <section>
+      <h3>Paiement par virement</h3>
+      ${c.infos_paiement
+        ? `<div class="paiement">${esc(c.infos_paiement)}</div>
+           <div><button class="btn secondary petit-btn" data-act="copierPaiement">Copier</button></div>`
+        : `<p class="petit">${jeSuisOrga ? 'Ajoutez votre IBAN ou votre Lydia avec « ✏️ Infos » pour que vos amis puissent vous rembourser.' : 'L\'organisateur n\'a pas encore indiqué ses coordonnées de paiement.'}</p>`}
+    </section>
+
+    <section>
+      <h3>Vins (${c.commande_vins.length})</h3>
+      ${c.commande_vins.length ? '' : '<p class="petit">Aucun vin pour l\'instant.</p>'}
+      ${c.commande_vins.map((v) => {
+        const parts = c.commande_participants.map((p) => [p, qte(v.id, p.user_id)]).filter(([, q]) => q > 0);
+        const maQ = qte(v.id, moi());
+        const peutEditerVin = jeSuisOrga || (ouverte && v.ajoute_par === moi());
+        return `
+        <div class="cmd-vin" data-vin="${esc(v.id)}">
+          <div class="ligne">
+            <strong>${esc(nomVin(v.data))}</strong>
+            ${jeSuisOrga
+              ? `<label class="petit">Prix <input class="prix-input" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(v.prix) || ''}" data-act="prix"> €</label>`
+              : `<span>${fmtEur(v.prix)} / bout.</span>`}
+          </div>
+          <div class="ligne">
+            <div class="lot-qty">
+              <span class="petit">Ma part :</span>
+              ${peutChoisir ? `<button type="button" data-act="moins">−</button>` : ''}
+              <span>${maQ}</span>
+              ${peutChoisir ? `<button type="button" data-act="plus">+</button>` : ''}
+            </div>
+            ${peutEditerVin ? `<button class="link" data-act="supprimerVin">Retirer ce vin</button>` : ''}
+          </div>
+          ${parts.length ? `<div class="petit">${parts.map(([p, q]) => `${esc(p.user_id === moi() ? 'moi' : nomPersonne(p))} ${q}`).join(' · ')}</div>` : ''}
+        </div>`;
+      }).join('')}
+
+      ${peutChoisir ? `
+      <div class="cmd-form" id="formVin">
+        <strong style="font-size:.95rem">Ajouter un vin</strong>
+        <div class="search-row">
+          <input id="cv-q" placeholder="ex. Jamet Côte-Rôtie 2022" autocomplete="off">
+          <button type="button" class="btn secondary petit-btn" data-act="chercherVin">🔍</button>
+        </div>
+        <input id="cv-domaine" placeholder="Domaine" autocomplete="off">
+        <div class="lot-row"><input id="cv-appellation" placeholder="Appellation" autocomplete="off"><input id="cv-millesime" type="number" inputmode="numeric" placeholder="Millésime"></div>
+        <div class="lot-row"><input id="cv-cuvee" placeholder="Cuvée (facultatif)" autocomplete="off"><input id="cv-prix" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Prix €"></div>
+        <select id="cv-couleur">${COULEURS.map((x) => `<option>${x}</option>`).join('')}</select>
+        <p class="search-status" id="cv-statut" hidden></p>
+        <div><button type="button" class="btn primary petit-btn" data-act="ajouterVin">Ajouter</button></div>
+      </div>` : ''}
+    </section>
+
+    <section>
+      <h3>Participants et remboursements</h3>
+      ${cpt.map((x) => {
+        const estMoi = x.p.user_id === moi();
+        const enAttente = x.rembs.filter((r) => !r.confirme_le);
+        return `
+        <div class="cmd-pers" data-user="${esc(x.p.user_id)}">
+          <div class="ligne">
+            <strong>${esc(estMoi ? 'Moi' : nomPersonne(x.p))}${x.orga ? ' · organisateur' : ''}</strong>
+            <span>${x.bouteilles} bout. · ${fmtEur(x.du)}</span>
+          </div>
+          ${x.orga ? `<div class="petit">A avancé ${fmtEur(total)} pour la commande.</div>` : `
+            <div class="petit">
+              ${x.confirme ? `Remboursé ${fmtEur(x.confirme)}` : ''}${x.confirme && (x.declare || x.reste) ? ' · ' : ''}
+              ${x.declare ? `virement déclaré ${fmtEur(x.declare)} (à confirmer)` : ''}${x.declare && x.reste ? ' · ' : ''}
+              ${x.reste ? `<strong style="color:var(--passe)">reste ${fmtEur(x.reste)}</strong>` : (x.du && !x.declare ? '✓ réglé' : '')}
+            </div>
+            ${estMoi && x.reste > 0 ? `<div><button class="btn primary petit-btn" data-act="declarer" data-montant="${x.reste}">J'ai fait le virement de ${fmtEur(x.reste)}</button></div>` : ''}
+            ${enAttente.map((r) => `
+              <div class="ligne petit">
+                <span>Virement de ${fmtEur(r.montant)} déclaré le ${fmtDate(r.declare_le)}</span>
+                <span>
+                  ${jeSuisOrga ? `<button class="btn primary petit-btn" data-act="confirmer" data-remb="${esc(r.id)}">Confirmer la réception</button>` : ''}
+                  ${estMoi || jeSuisOrga ? `<button class="link" data-act="annulerRemb" data-remb="${esc(r.id)}">Annuler</button>` : ''}
+                </span>
+              </div>`).join('')}
+          `}
+          ${c.statut === 'recue' && !x.orga && x.bouteilles ? `
+            <div class="ligne petit">
+              <span>${x.p.recupere ? '✓ Bouteilles récupérées' : '📦 Bouteilles chez l\'organisateur'}</span>
+              ${(estMoi || jeSuisOrga) ? `<button class="btn secondary petit-btn" data-act="recupere" data-valeur="${x.p.recupere ? '0' : '1'}">${x.p.recupere ? 'Annuler' : 'Marquer récupérées'}</button>` : ''}
+            </div>` : ''}
+          ${jeSuisOrga && !x.orga && !x.bouteilles ? `<div><button class="link" data-act="retirerPers">Retirer de la commande</button></div>` : ''}
+        </div>`;
+      }).join('')}
+    </section>
+
+    <p class="search-status" id="cmdStatut" hidden></p>
+
+    <div class="actions">
+      <button class="btn secondary" data-act="fermer">Fermer</button>
+      <span class="spacer"></span>
+      ${jeSuisOrga ? '<button class="btn danger" data-act="supprimerCommande">Supprimer la commande</button>'
+        : (ouverte && mien && !mien.bouteilles ? '<button class="btn danger" data-act="quitter">Quitter</button>' : '')}
+    </div>`;
+}
+
+const cmdStatut = (t, err = false, enCours = false) => { const el = $('#cmdStatut'); if (el) statutGenerique(el, t, err, enCours); };
+
+async function actionCommande(fn) {
+  try {
+    await fn();
+    await chargerCommandes({ silencieux: true });
+  } catch (e) {
+    cmdStatut('Échec : ' + e.message, true);
+  }
+}
+
+const jsonPost = (chemin, corps, prefer = 'return=minimal') => sbFetch(chemin, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: prefer }, body: JSON.stringify(corps),
+});
+const jsonPatch = (chemin, corps) => sbFetch(chemin, {
+  method: 'PATCH', headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' }, body: JSON.stringify(corps),
+});
+
+$('#cmdContenu').addEventListener('change', (e) => {
+  const act = e.target.dataset.act;
+  const c = commandes.find((x) => x.id === commandeOuverte);
+  if (!c) return;
+  if (act === 'statut') {
+    const nouveau = e.target.value;
+    if (nouveau === 'recue' && !confirm('Marquer la commande comme reçue ?\nLes bouteilles de chacun seront ajoutées à sa cave (« à récupérer chez vous »).')) {
+      e.target.value = c.statut; return;
+    }
+    actionCommande(() => jsonPatch(`/rest/v1/commandes?id=eq.${c.id}`, { statut: nouveau }));
+  }
+  if (act === 'prix') {
+    const vinId = e.target.closest('[data-vin]').dataset.vin;
+    actionCommande(() => jsonPatch(`/rest/v1/commande_vins?id=eq.${vinId}`, { prix: Math.max(0, Number(e.target.value) || 0) }));
+  }
+});
+
+$('#cmdContenu').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-act]');
+  if (!b || b.tagName === 'SELECT' || b.tagName === 'INPUT') return;
+  const act = b.dataset.act;
+  const c = commandes.find((x) => x.id === commandeOuverte);
+  if (act === 'fermer') return $('#dlgCommande').close();
+  if (!c) return;
+  const vinId = b.closest('[data-vin]')?.dataset.vin;
+  const userId = b.closest('[data-user]')?.dataset.user;
+
+  if (act === 'partager') {
+    const lien = lienCommande(c.id);
+    const texte = `Rejoins la commande « ${c.titre} » sur Ma Cave et choisis tes bouteilles :`;
+    try {
+      if (navigator.share) await navigator.share({ title: c.titre, text: texte, url: lien });
+      else { await navigator.clipboard.writeText(lien); cmdStatut('Lien copié : envoyez-le à vos amis.'); }
+    } catch { /* partage annulé */ }
+    return;
+  }
+  if (act === 'copierPaiement') {
+    try { await navigator.clipboard.writeText(c.infos_paiement); cmdStatut('Coordonnées copiées.'); } catch { cmdStatut('Copie impossible : sélectionnez le texte.', true); }
+    return;
+  }
+  if (act === 'editer') {
+    const titre = prompt('Nom de la commande :', c.titre); if (titre === null) return;
+    const fournisseur = prompt('Fournisseur (caviste, domaine…) :', c.fournisseur); if (fournisseur === null) return;
+    const date = prompt('Date de la commande (AAAA-MM-JJ) :', c.date_commande || ''); if (date === null) return;
+    const paiement = prompt('Coordonnées pour le virement (IBAN, Lydia, Wero…) :', c.infos_paiement); if (paiement === null) return;
+    return actionCommande(() => jsonPatch(`/rest/v1/commandes?id=eq.${c.id}`, {
+      titre: titre.trim() || c.titre, fournisseur: fournisseur.trim(),
+      date_commande: /^\d{4}-\d{2}-\d{2}$/.test(date.trim()) ? date.trim() : null, infos_paiement: paiement.trim(),
+    }));
+  }
+  if (act === 'plus' || act === 'moins') {
+    const actuelle = (c.commande_parts.find((x) => x.vin_id === vinId && x.user_id === moi()) || {}).quantite || 0;
+    const q = Math.max(0, actuelle + (act === 'plus' ? 1 : -1));
+    // Mise à jour immédiate à l'écran, puis enregistrement
+    const part = c.commande_parts.find((x) => x.vin_id === vinId && x.user_id === moi());
+    if (part) part.quantite = q; else c.commande_parts.push({ vin_id: vinId, commande_id: c.id, user_id: moi(), quantite: q });
+    afficherCommande();
+    return actionCommande(() => jsonPost('/rest/v1/commande_parts?on_conflict=vin_id,user_id',
+      { vin_id: vinId, commande_id: c.id, user_id: moi(), quantite: q }, 'resolution=merge-duplicates,return=minimal'));
+  }
+  if (act === 'supprimerVin') {
+    if (!confirm('Retirer ce vin de la commande (avec les parts de chacun) ?')) return;
+    return actionCommande(() => sbFetch(`/rest/v1/commande_vins?id=eq.${vinId}`, { method: 'DELETE' }));
+  }
+  if (act === 'chercherVin') {
+    const q = $('#cv-q').value.trim();
+    if (q.length < 3) return statutGenerique($('#cv-statut'), 'Tapez quelques mots (domaine, appellation, millésime).', true);
+    const code = codeAcces(); if (!code) return;
+    statutGenerique($('#cv-statut'), 'Recherche…', false, true);
+    try {
+      const f = await appelerAPI({ requete: q }, code);
+      if (!f.trouve) return statutGenerique($('#cv-statut'), f.message || 'Vin introuvable.', true);
+      $('#cv-domaine').value = f.domaine || ''; $('#cv-appellation').value = f.appellation || '';
+      $('#cv-millesime').value = f.millesime || ''; $('#cv-cuvee').value = f.cuvee || '';
+      if (COULEURS.includes(f.couleur)) $('#cv-couleur').value = f.couleur;
+      $('#formVin').dataset.fiche = JSON.stringify(f);
+      statutGenerique($('#cv-statut'), '✓ Trouvé' + (f.prixMin ? ` (prix du marché ${fmtEur(f.prixMin)} – ${fmtEur(f.prixMax)})` : '') + '. Indiquez le prix payé puis « Ajouter ».');
+    } catch (err) { statutGenerique($('#cv-statut'), 'Recherche impossible : ' + err.message, true); }
+    return;
+  }
+  if (act === 'ajouterVin') {
+    const d = {
+      domaine: $('#cv-domaine').value.trim(), cuvee: $('#cv-cuvee').value.trim(),
+      appellation: $('#cv-appellation').value.trim(), millesime: parseInt($('#cv-millesime').value, 10) || '',
+      couleur: $('#cv-couleur').value,
+    };
+    if (!d.domaine && !d.appellation) return statutGenerique($('#cv-statut'), 'Indiquez au moins le domaine ou l\'appellation.', true);
+    let fiche = {};
+    try { fiche = JSON.parse($('#formVin').dataset.fiche || '{}'); } catch {}
+    // On garde la fiche trouvée (fenêtre de dégustation, accords…) pour l'ajout en cave
+    const extra = Object.fromEntries(['region', 'boireDe', 'boireA', ...CHAMPS_FICHE].map((k) => [k, fiche[k] ?? '']).filter(([, v]) => v !== ''));
+    return actionCommande(() => jsonPost('/rest/v1/commande_vins', {
+      commande_id: c.id, data: { ...extra, ...d }, prix: Math.max(0, Number($('#cv-prix').value) || 0),
+    }));
+  }
+  if (act === 'declarer') {
+    const m = Number(b.dataset.montant);
+    if (!confirm(`Confirmez-vous avoir fait un virement de ${fmtEur(m)} à l'organisateur ?`)) return;
+    return actionCommande(() => jsonPost('/rest/v1/remboursements', { commande_id: c.id, montant: m }));
+  }
+  if (act === 'confirmer') {
+    return actionCommande(() => jsonPatch(`/rest/v1/remboursements?id=eq.${b.dataset.remb}`, { confirme_le: new Date().toISOString() }));
+  }
+  if (act === 'annulerRemb') {
+    if (!confirm('Annuler cette déclaration de virement ?')) return;
+    return actionCommande(() => sbFetch(`/rest/v1/remboursements?id=eq.${b.dataset.remb}`, { method: 'DELETE' }));
+  }
+  if (act === 'recupere') {
+    return actionCommande(() => jsonPatch(`/rest/v1/commande_participants?commande_id=eq.${c.id}&user_id=eq.${userId}`, { recupere: b.dataset.valeur === '1' }));
+  }
+  if (act === 'retirerPers') {
+    if (!confirm('Retirer cette personne de la commande ?')) return;
+    return actionCommande(() => sbFetch(`/rest/v1/commande_participants?commande_id=eq.${c.id}&user_id=eq.${userId}`, { method: 'DELETE' }));
+  }
+  if (act === 'quitter') {
+    if (!confirm('Quitter cette commande ?')) return;
+    await actionCommande(() => sbFetch(`/rest/v1/commande_participants?commande_id=eq.${c.id}&user_id=eq.${moi()}`, { method: 'DELETE' }));
+    return $('#dlgCommande').close();
+  }
+  if (act === 'supprimerCommande') {
+    if (!confirm(`Supprimer définitivement la commande « ${c.titre} » pour tout le monde ?`)) return;
+    await actionCommande(() => sbFetch(`/rest/v1/commandes?id=eq.${c.id}`, { method: 'DELETE' }));
+    return $('#dlgCommande').close();
+  }
+});
+
+// Commande reçue : mes bouteilles entrent dans ma cave (une seule fois) ;
+// récupérées : leur emplacement « chez l'organisateur » est libéré.
+async function integrerCommandesALaCave() {
+  let change = false;
+  const ajoutees = [];
+  for (const c of commandes) {
+    const p = c.commande_participants.find((x) => x.user_id === moi());
+    if (!p || c.statut !== 'recue') continue;
+    const jeSuisOrga = c.organisateur === moi();
+    const orga = c.commande_participants.find((x) => x.user_id === c.organisateur);
+    const mesParts = c.commande_parts.filter((x) => x.user_id === moi() && x.quantite > 0);
+
+    if (!p.cave_ajoutee && mesParts.length) {
+      // On « réserve » l'ajout : seul l'appareil qui passe cave_ajoutee de false à true ajoute les bouteilles
+      let reserve = [];
+      try {
+        reserve = await sbFetch(`/rest/v1/commande_participants?commande_id=eq.${c.id}&user_id=eq.${moi()}&cave_ajoutee=eq.false`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+          body: JSON.stringify({ cave_ajoutee: true }),
+        });
+      } catch { continue; }
+      p.cave_ajoutee = true;
+      if (!Array.isArray(reserve) || !reserve.length) continue; // déjà fait sur un autre appareil
+      for (const part of mesParts) {
+        const v = c.commande_vins.find((x) => x.id === part.vin_id);
+        if (!v) continue;
+        const d = v.data || {};
+        const b = {
+          domaine: d.domaine || '', cuvee: d.cuvee || '', appellation: d.appellation || '', region: d.region || '',
+          millesime: d.millesime || '', couleur: COULEURS.includes(d.couleur) ? d.couleur : 'Rouge',
+          quantite: part.quantite, boireDe: d.boireDe || '', boireA: d.boireA || '',
+          prix: Number(v.prix) || '', emplacement: '', notes: `Commande « ${c.titre} »${c.fournisseur ? ' chez ' + c.fournisseur : ''}${c.date_commande ? ' (' + fmtDate(c.date_commande) + ')' : ''}`,
+          ...Object.fromEntries(CHAMPS_FICHE.map((k) => [k, d[k] ?? ''])),
+        };
+        const existant = jeSuisOrga ? bottles.find((x) => cleVin(x) === cleVin(b) && !x.aRecuperer) : null;
+        if (existant) {
+          existant.quantite += b.quantite;
+          if (!existant.prix) existant.prix = b.prix;
+        } else {
+          if (!jeSuisOrga && !p.recupere) { b.emplacement = `Chez ${nomPersonne(orga)} (à récupérer)`; b.aRecuperer = c.id; }
+          bottles.push({ id: nouvelId(), ...b, photo: null, ajoute: Date.now() });
+        }
+      }
+      ajoutees.push(c.titre);
+      change = true;
+    }
+    // Bouteilles récupérées (ou de nouveau à récupérer)
+    for (const b of bottles) {
+      if (b.aRecuperer === c.id && p.recupere) { b.emplacement = ''; delete b.aRecuperer; change = true; }
+    }
+  }
+  if (change) {
+    await enregistrer();
+    afficher();
+    if (ajoutees.length) cmdStatut(`✓ Bouteilles ajoutées à votre cave : ${ajoutees.join(', ')}.`);
+    const el = $('#cmdListeStatut');
+    if (ajoutees.length && el) statutGenerique(el, `✓ Les bouteilles de « ${ajoutees.join(' », « ')} » ont été ajoutées à votre cave.`);
+  }
+}
+
+// Ouverture d'un lien de commande partagé (#commande=…)
+async function traiterLienCommande() {
+  const m = /commande=([0-9a-f-]{36})/i.exec(location.hash);
+  if (!m) return;
+  const id = m[1];
+  if (!session) {
+    try { sessionStorage.setItem('ma-cave-commande-en-attente', id); } catch {}
+    history.replaceState(null, '', location.pathname + location.search);
+    modeCompte = 'connexion';
+    afficherCompte();
+    compteStatut('Connectez-vous (ou créez un compte) pour rejoindre la commande partagée.');
+    $('#dlgCompte').showModal();
+    return;
+  }
+  history.replaceState(null, '', location.pathname + location.search);
+  await rejoindreCommande(id);
+}
+
+async function rejoindreCommande(id) {
+  try {
+    await sbFetch('/rest/v1/rpc/rejoindre_commande', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: id, pseudo_choisi: session.user.email.split('@')[0] }),
+    });
+    changerVue('commandes');
+    await chargerCommandes({ silencieux: true });
+    ouvrirCommande(id);
+  } catch (e) {
+    changerVue('commandes');
+    statutGenerique($('#cmdListeStatut'), 'Impossible de rejoindre cette commande : ' + e.message, true);
+  }
+}
+
+// Après connexion : commande en attente ? onglets à jour ?
+async function apresConnexion() {
+  await majOnglets();
+  let attente = null;
+  try { attente = sessionStorage.getItem('ma-cave-commande-en-attente'); sessionStorage.removeItem('ma-cave-commande-en-attente'); } catch {}
+  if (attente && session) { $('#dlgCompte').close(); await rejoindreCommande(attente); }
+  else if (session) chargerCommandes({ silencieux: true });
+}
+window.addEventListener('hashchange', () => { if (/commande=/.test(location.hash)) traiterLienCommande(); });
 
 /* ---------- Mise à jour automatique ---------- */
 // À l'ouverture, on compare la version affichée avec celle en ligne ;
@@ -1560,6 +2204,9 @@ if (location.protocol.startsWith('http')) {
   afficherCompte();
   if (/access_token|error_code/.test(location.hash)) await traiterLienEmail();
   else if (session) await synchroniser({ telecharger: true });
+  await majOnglets();
+  if (/commande=/.test(location.hash)) await traiterLienCommande();
+  else if (session) chargerCommandes({ silencieux: true }); // bouteilles de commandes reçues
 })();
 </script>
 </body>
