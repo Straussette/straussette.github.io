@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-09.6">
+<meta name="app-version" content="2026-10-09.7">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -313,6 +313,9 @@
     <p id="compteIntro">Connectez-vous pour retrouver votre cave sur tous vos appareils (téléphone, ordinateur…).</p>
 
     <div id="blocIdentifiants" style="display:grid; gap:10px">
+      <label class="f" id="lblPseudo" hidden>Pseudo (visible par vos amis)
+        <input id="c-pseudo" autocomplete="nickname" autocapitalize="off" maxlength="30" placeholder="ex. Paulo">
+      </label>
       <label class="f" id="lblEmail">E-mail
         <input id="c-email" type="email" autocomplete="username" inputmode="email" autocapitalize="off">
       </label>
@@ -326,6 +329,7 @@
 
     <div id="compteConnecte" hidden>
       <p>Connecté en tant que <strong id="c-qui"></strong>.</p>
+      <p style="margin-top:6px">Pseudo : <strong id="c-monpseudo"></strong> <button type="button" class="link" id="btnChangerPseudo">Modifier</button></p>
       <p id="c-sync" style="margin-top:6px"></p>
     </div>
 
@@ -1186,7 +1190,7 @@ function ouvrirSession(s) {
     access_token: s.access_token,
     refresh_token: s.refresh_token,
     expires_at: s.expires_at || Math.floor(Date.now() / 1000) + (s.expires_in || 3600),
-    user: { id: s.user.id, email: s.user.email },
+    user: { id: s.user.id, email: s.user.email, pseudo: session?.user?.pseudo || s.user.user_metadata?.pseudo || '' },
   };
   ecrireLocal('ma-cave-session', session);
 }
@@ -1391,7 +1395,7 @@ let modeCompte = 'connexion';
 
 function afficherCompte(message) {
   const co = !!session;
-  $('#btnCompte').textContent = co ? `${etatSync || '👤'} ${session.user.email.split('@')[0]}` : '👤 Se connecter';
+  $('#btnCompte').textContent = co ? `${etatSync || '👤'} ${session.user.pseudo || session.user.email.split('@')[0]}` : '👤 Se connecter';
   if (co && modeCompte !== 'nouveau') modeCompte = 'compte';
   if (!co && (modeCompte === 'compte' || modeCompte === 'nouveau')) modeCompte = 'connexion';
   const m = modeCompte;
@@ -1412,6 +1416,7 @@ function afficherCompte(message) {
   $('#lblEmail').hidden = m === 'nouveau';
   $('#lblMdp').hidden = m === 'oubli';
   $('#lblMdp2').hidden = !(m === 'inscription' || m === 'nouveau');
+  $('#lblPseudo').hidden = m !== 'inscription';
   $('#lblMdp').firstChild.textContent = m === 'nouveau' ? 'Nouveau mot de passe' : 'Mot de passe';
   $('#c-mdp').autocomplete = (m === 'inscription' || m === 'nouveau') ? 'new-password' : 'current-password';
 
@@ -1424,6 +1429,7 @@ function afficherCompte(message) {
 
   if (m === 'compte') {
     $('#c-qui').textContent = session.user.email;
+    $('#c-monpseudo').textContent = session.user.pseudo || '(aucun)';
     $('#c-sync').textContent = {
       '⏳': '⏳ Synchronisation en cours…',
       '☁️': '☁️ Cave synchronisée avec votre compte.',
@@ -1463,6 +1469,8 @@ async function validerCompte() {
   if (m !== 'nouveau' && !/^\S+@\S+\.\S+$/.test(email)) return compteStatut('Indiquez une adresse e-mail valide.', true);
   if (m !== 'oubli' && password.length < 8) return compteStatut('Le mot de passe doit faire au moins 8 caractères.', true);
   if ((m === 'inscription' || m === 'nouveau') && password !== password2) return compteStatut('Les deux mots de passe ne sont pas identiques.', true);
+  const pseudo = $('#c-pseudo').value.trim();
+  if (m === 'inscription' && (pseudo.length < 2 || pseudo.length > 30)) return compteStatut('Choisissez un pseudo de 2 à 30 caractères.', true);
 
   try {
     if (m === 'oubli') {
@@ -1491,7 +1499,7 @@ async function validerCompte() {
     if (m === 'inscription') {
       compteStatut('Création du compte…', false, true);
       const r = await sbFetch('/auth/v1/signup?redirect_to=' + encodeURIComponent(adresseApp()), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, data: { pseudo } }),
       }, false);
       if (!r || !r.access_token) {
         $('#c-mdp').value = ''; $('#c-mdp2').value = '';
@@ -1640,7 +1648,7 @@ async function majOnglets() {
 
 const fmtEur = (n) => (Number(n) || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-const nomVin = (d) => [d.domaine, d.cuvee, d.appellation, d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom';
+const nomVin = (d) => ([d.domaine, d.cuvee, d.appellation, d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom') + (d.format ? ` (${d.format})` : '');
 
 function statutGenerique(el, txt, erreur = false, enCours = false) {
   el.hidden = !txt;
@@ -1656,7 +1664,7 @@ const COUT_RECHERCHE = 0.07; // estimation moyenne en euros
 async function chargerAdmin() {
   statutGenerique($('#adminStatut'), 'Chargement…', false, true);
   try {
-    const liste = await sbFetch('/rest/v1/rpc/admin_utilisateurs', {
+    const liste = await sbFetch('/rest/v1/rpc/admin_comptes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
     });
     const totalRech = liste.reduce((s, u) => s + Number(u.recherches_mois), 0);
@@ -1668,12 +1676,13 @@ async function chargerAdmin() {
     $('#listeAdmin').innerHTML = liste.map((u) => `
       <li class="carte-simple" style="cursor:default">
         <div class="ligne">
-          <strong>${esc(u.email)}</strong>
+          <strong>${esc(u.pseudo || u.email)}</strong>
           ${u.admin ? '<span class="pastille p-recue">admin</span>'
             : u.membre ? '<span class="pastille p-ouverte">membre</span>'
             : u.confirme ? '<span class="pastille p-commandee">en attente</span>'
             : '<span class="pastille p-neutre">e-mail non confirmé</span>'}
         </div>
+        ${u.pseudo ? `<div class="petit">${esc(u.email)}</div>` : ''}
         <div class="petit">Inscrit le ${fmtDate(u.inscrit)}${u.derniere_connexion ? ' · vu le ' + fmtDate(u.derniere_connexion) : ''}</div>
         <div class="petit">${u.nb_bouteilles} bouteille${u.nb_bouteilles > 1 ? 's' : ''} (${u.nb_vins} vin${u.nb_vins > 1 ? 's' : ''}) · ${u.recherches_mois} recherche${u.recherches_mois > 1 ? 's' : ''} ce mois-ci${u.recherches_mois ? ' (≈ ' + fmtEur(u.recherches_mois * COUT_RECHERCHE) + ')' : ''}</div>
         ${u.admin ? '' : `<div><button class="btn ${u.membre ? 'secondary' : 'primary'} petit-btn" data-membre="${esc(u.user_id)}" data-actif="${u.membre ? '0' : '1'}">
@@ -1790,6 +1799,7 @@ $('#btnNouvelleCommande').onclick = async () => {
     // L'identifiant est choisi ici : pas besoin que la base renvoie la ligne créée
     const id = nouvelId();
     await jsonPost('/rest/v1/commandes', { id, titre, date_commande: new Date().toISOString().slice(0, 10) });
+    await propagerPseudo();
     await chargerCommandes({ silencieux: true });
     ouvrirCommande(id);
   } catch (e) {
@@ -1867,6 +1877,18 @@ function afficherCommande() {
         </div>`;
       }).join('')}
 
+      ${jeSuisOrga ? `
+      <div class="cmd-form">
+        <strong style="font-size:.95rem">📄 Importer la proposition du caviste</strong>
+        <span class="petit">Photo, capture d'écran, PDF ou tableau (Excel, CSV). Plusieurs fichiers possibles (une photo par page).</span>
+        <label class="btn secondary petit-btn" style="justify-self:start">
+          Choisir des fichiers
+          <input type="file" id="propaleFichiers" multiple accept="image/*,application/pdf,.pdf,.csv,text/csv,.xlsx,.xls,.ods,.txt" hidden>
+        </label>
+        <p class="search-status" id="propaleStatut" hidden></p>
+        ${propaleHTML(c)}
+      </div>` : ''}
+
       ${peutChoisir ? `
       <div class="cmd-form" id="formVin">
         <strong style="font-size:.95rem">Ajouter un vin</strong>
@@ -1929,6 +1951,115 @@ function afficherCommande() {
         : (ouverte && mien && !mien.bouteilles ? '<button class="btn danger" data-act="quitter">Quitter</button>' : '')}
     </div>`;
 }
+
+/* ---------- Import d'une proposition (photo, PDF, tableau) ---------- */
+let propale = null; // { cmdId, fournisseur, remarques, vins: [{ ...data, prix, coche }] }
+
+function propaleHTML(c) {
+  if (!propale || propale.cmdId !== c.id || !propale.vins.length) return '';
+  const choisis = propale.vins.filter((v) => v.coche);
+  return `
+    ${propale.remarques ? `<p class="petit">ℹ️ ${esc(propale.remarques)}</p>` : ''}
+    <ul class="lot-list" id="propaleListe">
+      ${propale.vins.map((v, i) => `
+        <li class="lot-item ${v.coche ? '' : 'off'}" data-pi="${i}" style="grid-template-columns:auto 1fr">
+          <div class="lot-side"><input type="checkbox" data-pk="coche" ${v.coche ? 'checked' : ''} aria-label="Garder ce vin"></div>
+          <div class="lot-fields">
+            <input data-pk="domaine" value="${esc(v.domaine || '')}" placeholder="Domaine">
+            <div class="lot-row"><input data-pk="appellation" value="${esc(v.appellation || '')}" placeholder="Appellation"><input data-pk="millesime" type="number" inputmode="numeric" value="${esc(v.millesime ?? '')}" placeholder="Millésime"></div>
+            <div class="lot-row"><input data-pk="cuvee" value="${esc(v.cuvee || '')}" placeholder="Cuvée"><input data-pk="prix" type="number" inputmode="decimal" step="0.01" min="0" value="${esc(v.prix ?? '')}" placeholder="Prix €"></div>
+            <div class="lot-meta">
+              ${v.format && !/^75/.test(v.format) ? `<span class="pastille p-commandee">${esc(v.format)}</span>` : ''}
+              ${v.prixHT ? '<span class="pastille p-alerte">prix HT</span>' : ''}
+              ${v.prix == null ? '<span class="pastille p-alerte">prix à compléter</span>' : ''}
+              ${v.quantiteMax ? `<span>max ${esc(v.quantiteMax)} bout.</span>` : ''}
+              ${v.remarque ? `<span>${esc(v.remarque)}</span>` : ''}
+            </div>
+          </div>
+        </li>`).join('')}
+    </ul>
+    <div class="actions">
+      <button type="button" class="link" data-act="propaleAnnuler">Annuler l'import</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn primary petit-btn" data-act="propaleAjouter" ${choisis.length ? '' : 'disabled'}>Ajouter ${choisis.length} vin${choisis.length > 1 ? 's' : ''} à la commande</button>
+    </div>`;
+}
+
+const lireDataUrl = (f) => new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => ko(r.error); r.readAsDataURL(f); });
+
+let xlsxPromesse = null;
+function chargerXLSX() {
+  // Bibliothèque de lecture Excel, chargée seulement si besoin
+  xlsxPromesse ??= new Promise((ok, ko) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    sc.onload = () => ok(window.XLSX);
+    sc.onerror = () => { xlsxPromesse = null; ko(new Error('lecteur Excel indisponible')); };
+    document.head.appendChild(sc);
+  });
+  return xlsxPromesse;
+}
+
+// Transforme un fichier en ce que la fonction serveur attend
+async function pieceDepuisFichier(f) {
+  const nom = (f.name || '').toLowerCase();
+  if (f.type.startsWith('image/')) return { image: await compresser(f, 2000, 0.85) };
+  if (f.type === 'application/pdf' || nom.endsWith('.pdf')) {
+    if (f.size > 6 * 1024 * 1024) throw new Error(`${f.name} dépasse 6 Mo`);
+    return { document: (await lireDataUrl(f)).replace(/^data:[^;]*;/, 'data:application/pdf;') };
+  }
+  if (/\.(xlsx|xls|ods)$/.test(nom)) {
+    const XLSX = await chargerXLSX();
+    const classeur = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    const texte = classeur.SheetNames.map((n) => `--- Feuille « ${n} » ---\n` + XLSX.utils.sheet_to_csv(classeur.Sheets[n])).join('\n\n');
+    return { texte };
+  }
+  return { texte: await f.text() };
+}
+
+async function importerPropale(fichiers, c) {
+  const code = codeAcces();
+  if (!code) return;
+  const st = (t, e = false, enCours = false) => { const el = $('#propaleStatut'); if (el) statutGenerique(el, t, e, enCours); };
+  const nouveaux = [];
+  let fournisseur = '', remarques = [];
+  for (let i = 0; i < fichiers.length; i++) {
+    st(`Lecture de la proposition… fichier ${i + 1} sur ${fichiers.length} (≈ 20 s)`, false, true);
+    try {
+      const res = await appelerAPI({ mode: 'propale', ...(await pieceDepuisFichier(fichiers[i])) }, code);
+      fournisseur ||= res.fournisseur || '';
+      if (res.remarques) remarques.push(res.remarques);
+      for (const v of res.vins || []) nouveaux.push({ ...v, coche: true });
+    } catch (e) {
+      st(`${fichiers[i].name} : ${e.message}`, true);
+      if (/code d'accès|autorisé/.test(e.message)) return;
+    }
+  }
+  if (!nouveaux.length) { st('Aucun vin trouvé dans ce document.', true); return; }
+  propale = { cmdId: c.id, fournisseur, remarques: remarques.join(' · '), vins: [...(propale?.cmdId === c.id ? propale.vins : []), ...nouveaux] };
+  afficherCommande();
+  const aCompleter = nouveaux.filter((v) => v.prix == null).length;
+  st(`${nouveaux.length} vin${nouveaux.length > 1 ? 's' : ''} trouvé${nouveaux.length > 1 ? 's' : ''}${fournisseur ? ' chez ' + fournisseur : ''}. Vérifiez la liste${aCompleter ? ` (${aCompleter} prix à compléter)` : ''}, décochez ce qui ne vous intéresse pas, puis ajoutez.`);
+}
+
+$('#cmdContenu').addEventListener('change', (e) => {
+  if (e.target.id === 'propaleFichiers') {
+    const c = commandes.find((x) => x.id === commandeOuverte);
+    const f = [...e.target.files];
+    e.target.value = '';
+    if (c && f.length) importerPropale(f, c);
+  }
+});
+$('#cmdContenu').addEventListener('input', (e) => {
+  const k = e.target.dataset.pk;
+  const li = e.target.closest('[data-pi]');
+  if (!k || !li || !propale) return;
+  const v = propale.vins[li.dataset.pi];
+  if (k === 'coche') { v.coche = e.target.checked; afficherCommande(); return; }
+  if (k === 'millesime') v.millesime = parseInt(e.target.value, 10) || null;
+  else if (k === 'prix') v.prix = e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0);
+  else v[k] = e.target.value;
+});
 
 const cmdStatut = (t, err = false, enCours = false) => { const el = $('#cmdStatut'); if (el) statutGenerique(el, t, err, enCours); };
 
@@ -2028,6 +2159,28 @@ $('#cmdContenu').addEventListener('click', async (e) => {
     } catch (err) { statutGenerique($('#cv-statut'), 'Recherche impossible : ' + err.message, true); }
     return;
   }
+  if (act === 'propaleAnnuler') { propale = null; return afficherCommande(); }
+  if (act === 'propaleAjouter') {
+    const choisis = propale.vins.filter((v) => v.coche && (v.domaine || v.appellation));
+    if (!choisis.length) return;
+    const lignes = choisis.map((v) => ({
+      commande_id: c.id,
+      prix: Math.max(0, Number(v.prix) || 0),
+      data: {
+        domaine: (v.domaine || '').trim(), cuvee: (v.cuvee || '').trim(), appellation: (v.appellation || '').trim(),
+        millesime: parseInt(v.millesime, 10) || '', couleur: COULEURS.includes(v.couleur) ? v.couleur : 'Rouge',
+        ...(v.format && !/^75/.test(v.format) ? { format: v.format } : {}),
+        ...(v.remarque ? { remarque: v.remarque } : {}),
+      },
+    }));
+    const fournisseur = propale.fournisseur;
+    propale = null;
+    return actionCommande(async () => {
+      await jsonPost('/rest/v1/commande_vins', lignes);
+      if (fournisseur && !c.fournisseur) await jsonPatch(`/rest/v1/commandes?id=eq.${c.id}`, { fournisseur });
+      cmdStatut(`✓ ${lignes.length} vin${lignes.length > 1 ? 's' : ''} ajouté${lignes.length > 1 ? 's' : ''} à la commande.`);
+    });
+  }
   if (act === 'ajouterVin') {
     const d = {
       domaine: $('#cv-domaine').value.trim(), cuvee: $('#cv-cuvee').value.trim(),
@@ -2105,7 +2258,7 @@ async function integrerCommandesALaCave() {
           domaine: d.domaine || '', cuvee: d.cuvee || '', appellation: d.appellation || '', region: d.region || '',
           millesime: d.millesime || '', couleur: COULEURS.includes(d.couleur) ? d.couleur : 'Rouge',
           quantite: part.quantite, boireDe: d.boireDe || '', boireA: d.boireA || '',
-          prix: Number(v.prix) || '', emplacement: '', notes: `Commande « ${c.titre} »${c.fournisseur ? ' chez ' + c.fournisseur : ''}${c.date_commande ? ' (' + fmtDate(c.date_commande) + ')' : ''}`,
+          prix: Number(v.prix) || '', emplacement: '', notes: `${d.format ? 'Format ' + d.format + ' · ' : ''}Commande « ${c.titre} »${c.fournisseur ? ' chez ' + c.fournisseur : ''}${c.date_commande ? ' (' + fmtDate(c.date_commande) + ')' : ''}`,
           ...Object.fromEntries(CHAMPS_FICHE.map((k) => [k, d[k] ?? ''])),
         };
         const existant = jeSuisOrga ? bottles.find((x) => cleVin(x) === cleVin(b) && !x.aRecuperer) : null;
@@ -2156,7 +2309,7 @@ async function rejoindreCommande(id) {
   try {
     await sbFetch('/rest/v1/rpc/rejoindre_commande', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cmd: id, pseudo_choisi: session.user.email.split('@')[0] }),
+      body: JSON.stringify({ cmd: id, pseudo_choisi: session.user.pseudo || session.user.email.split('@')[0] }),
     });
     changerVue('commandes');
     await chargerCommandes({ silencieux: true });
@@ -2167,8 +2320,68 @@ async function rejoindreCommande(id) {
   }
 }
 
+/* ---------- Pseudo ---------- */
+// Chaque compte a un profil avec un pseudo unique, affiché aux autres à la place de l'e-mail
+async function assurerProfil() {
+  if (!session) return;
+  try {
+    const r = await sbFetch(`/rest/v1/profils?select=pseudo&user_id=eq.${moi()}`);
+    if (r.length) {
+      session.user.pseudo = r[0].pseudo;
+    } else {
+      let pseudo = session.user.pseudo || '';
+      for (let essai = 0; essai < 4; essai++) {
+        if (pseudo.length < 2) {
+          pseudo = (prompt(essai ? 'Ce pseudo est déjà pris. Choisissez-en un autre :' : 'Choisissez un pseudo (visible par vos amis dans les commandes) :',
+            session.user.email.split('@')[0].slice(0, 30)) || '').trim();
+          if (!pseudo) return;
+        }
+        try {
+          await jsonPost('/rest/v1/profils', { user_id: moi(), pseudo: pseudo.slice(0, 30) });
+          session.user.pseudo = pseudo.slice(0, 30);
+          break;
+        } catch (e) {
+          if (e.status === 409 || e.code === '23505') { pseudo = ''; continue; }
+          throw e;
+        }
+      }
+    }
+    ecrireLocal('ma-cave-session', session);
+    afficherCompte();
+    await propagerPseudo();
+  } catch (e) { console.warn('Profil', e); }
+}
+
+// Met le pseudo à jour dans les commandes auxquelles je participe
+async function propagerPseudo() {
+  if (!session?.user.pseudo) return;
+  try {
+    await jsonPatch(`/rest/v1/commande_participants?user_id=eq.${moi()}&pseudo=neq.${encodeURIComponent(session.user.pseudo)}`, { pseudo: session.user.pseudo });
+  } catch {}
+}
+
+$('#btnChangerPseudo').onclick = async () => {
+  const nouveau = (prompt('Nouveau pseudo (2 à 30 caractères) :', session.user.pseudo || '') || '').trim();
+  if (!nouveau || nouveau === session.user.pseudo) return;
+  if (nouveau.length < 2 || nouveau.length > 30) return compteStatut('Le pseudo doit faire de 2 à 30 caractères.', true);
+  try {
+    const existe = await sbFetch(`/rest/v1/profils?select=user_id&user_id=eq.${moi()}`);
+    if (existe.length) await jsonPatch(`/rest/v1/profils?user_id=eq.${moi()}`, { pseudo: nouveau, modifie: new Date().toISOString() });
+    else await jsonPost('/rest/v1/profils', { user_id: moi(), pseudo: nouveau });
+    session.user.pseudo = nouveau;
+    ecrireLocal('ma-cave-session', session);
+    await propagerPseudo();
+    afficherCompte();
+    compteStatut('✓ Pseudo modifié.');
+    chargerCommandes({ silencieux: true });
+  } catch (e) {
+    compteStatut(e.status === 409 || e.code === '23505' ? 'Ce pseudo est déjà pris, choisissez-en un autre.' : 'Échec : ' + e.message, true);
+  }
+};
+
 // Après connexion : commande en attente ? onglets à jour ?
 async function apresConnexion() {
+  await assurerProfil();
   await majOnglets();
   let attente = null;
   try { attente = sessionStorage.getItem('ma-cave-commande-en-attente'); sessionStorage.removeItem('ma-cave-commande-en-attente'); } catch {}
@@ -2204,6 +2417,7 @@ if (location.protocol.startsWith('http')) {
   afficherCompte();
   if (/access_token|error_code/.test(location.hash)) await traiterLienEmail();
   else if (session) await synchroniser({ telecharger: true });
+  if (session) await assurerProfil();
   await majOnglets();
   if (/commande=/.test(location.hash)) await traiterLienCommande();
   else if (session) chargerCommandes({ silencieux: true }); // bouteilles de commandes reçues

@@ -67,6 +67,34 @@ Règles :
 - nonIdentifiees = nombre de bouteilles visibles dont tu n'as pas pu lire l'étiquette.
 - S'il n'y a aucune bouteille de vin, renvoie {"vins": [], "nonIdentifiees": 0}.`;
 
+// Mode « propale » : extraire les vins et les prix d'une proposition de caviste (photo, PDF ou tableau)
+const CONSIGNE_PROPALE = `Tu es un sommelier expert et un assistant de saisie rigoureux. On te donne une proposition commerciale de vins (offre de caviste, de domaine ou de négociant : photo, PDF ou tableau).
+Extrais chaque vin proposé avec son prix. Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
+{
+  "fournisseur": "nom du caviste / domaine / négociant si visible, sinon chaîne vide",
+  "vins": [
+    {
+      "domaine": "nom du domaine ou château",
+      "cuvee": "nom de la cuvée, ou chaîne vide",
+      "appellation": "appellation",
+      "millesime": 2022,
+      "couleur": "une valeur parmi ${COULEURS.join(", ")}",
+      "format": "75cl | magnum | demi | autre (préciser)",
+      "prix": 45.5,
+      "prixHT": false,
+      "quantiteMax": 12,
+      "remarque": "conditionnement, allocation, etc. ou chaîne vide"
+    }
+  ],
+  "remarques": "conditions générales utiles (franco, délais, TVA…) ou chaîne vide"
+}
+Règles :
+- prix = prix unitaire PAR BOUTEILLE en euros, TTC si les deux sont indiqués. Si seul un prix par carton est donné, divise par le nombre de bouteilles du carton. Si seul le HT est donné, mets ce prix et prixHT: true.
+- millesime, prix, quantiteMax sont des nombres ou null. N'invente rien : si une information n'est pas visible, mets null ou chaîne vide.
+- Une ligne par vin et par format (un magnum est une ligne distincte).
+- Complète la couleur et l'appellation d'après tes connaissances si c'est évident.
+- Ignore les lignes qui ne sont pas des vins (frais de port, totaux…).`;
+
 function reponse(corps: unknown, statut: number, cors: Record<string, string>) {
   return new Response(JSON.stringify(corps), {
     status: statut,
@@ -126,6 +154,46 @@ async function estMembre(req: Request): Promise<boolean> {
     return Array.isArray(lignes) && lignes.length > 0;
   } catch {
     return false;
+  }
+}
+
+async function extrairePropale(
+  cle: string,
+  piece: { type: "image" | "document" | "texte"; media_type?: string; data: string },
+  cors: Record<string, string>,
+) {
+  const contenu: unknown[] = [];
+  if (piece.type === "texte") {
+    contenu.push({ type: "text", text: "Voici la proposition (tableau converti en texte) :\n\n" + piece.data });
+  } else {
+    contenu.push({ type: piece.type, source: { type: "base64", media_type: piece.media_type, data: piece.data } });
+    contenu.push({ type: "text", text: "Voici la proposition. Extrais les vins et leurs prix." });
+  }
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: MODELE, max_tokens: 8000, system: CONSIGNE_PROPALE, messages: [{ role: "user", content: contenu }] }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      console.error("Erreur API Anthropic", data);
+      return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
+    }
+    const texte = (data.content ?? [])
+      .filter((b: { type: string }) => b.type === "text")
+      .map((b: { text: string }) => b.text)
+      .join("\n");
+    const res = extraireJSON(texte);
+    const vins = (Array.isArray(res.vins) ? res.vins : []).map((v: Record<string, unknown>) => ({
+      ...v,
+      couleur: COULEURS.includes(String(v.couleur)) ? v.couleur : "",
+      prix: Number(v.prix) > 0 ? Math.round(Number(v.prix) * 100) / 100 : null,
+    }));
+    return reponse({ fournisseur: res.fournisseur ?? "", vins, remarques: res.remarques ?? "" }, 200, cors);
+  } catch (e) {
+    console.error(e);
+    return reponse({ erreur: "Impossible de lire la proposition, réessayez." }, 500, cors);
   }
 }
 
@@ -199,10 +267,20 @@ Deno.serve(async (req) => {
   let requete = "";
   let mode = "rechercher";
   let image: { media_type: string; data: string } | null = null;
+  let pdf = "";
+  let texteTableau = "";
   try {
     const corps = await req.json();
     requete = String(corps.requete ?? "").trim();
     if (corps.mode === "detecter") mode = "detecter";
+    if (corps.mode === "propale") mode = "propale";
+    if (corps.document) {
+      const m = /^data:application\/pdf;base64,([A-Za-z0-9+/=]+)$/.exec(String(corps.document));
+      if (!m) return reponse({ erreur: "Seuls les PDF sont acceptés" }, 400, cors);
+      if (m[1].length > 8_000_000) return reponse({ erreur: "PDF trop lourd (6 Mo maximum)" }, 413, cors);
+      pdf = m[1];
+    }
+    if (corps.texte) texteTableau = String(corps.texte).slice(0, 60_000);
     if (corps.image) {
       // Photo de l'étiquette envoyée en "data URL" (data:image/jpeg;base64,....)
       const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(corps.image));
@@ -213,7 +291,14 @@ Deno.serve(async (req) => {
   } catch {
     return reponse({ erreur: "Requête invalide" }, 400, cors);
   }
-  await noterRecherche(req, mode === "detecter" ? "detecter" : (image ? "photo" : "texte"));
+  await noterRecherche(req, mode === "rechercher" ? (image ? "photo" : "texte") : mode);
+
+  if (mode === "propale") {
+    if (pdf) return await extrairePropale(cle, { type: "document", media_type: "application/pdf", data: pdf }, cors);
+    if (image) return await extrairePropale(cle, { type: "image", ...image }, cors);
+    if (texteTableau.trim()) return await extrairePropale(cle, { type: "texte", data: texteTableau }, cors);
+    return reponse({ erreur: "Ajoutez une photo, un PDF ou un tableau" }, 400, cors);
+  }
 
   if (mode === "detecter") {
     if (!image) return reponse({ erreur: "Photo manquante" }, 400, cors);
