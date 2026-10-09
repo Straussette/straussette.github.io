@@ -90,12 +90,37 @@
   .tools { display:flex; justify-content:center; gap:18px; margin-top:28px; }
   .link { background:none; border:0; color:var(--muted); text-decoration:underline; font:inherit; font-size:.9rem; cursor:pointer; }
 
-  .fab {
+  .fabs {
     position:fixed; left:50%; transform:translateX(-50%); bottom:calc(18px + env(safe-area-inset-bottom));
+    display:flex; gap:8px; width:max-content; max-width:calc(100% - 32px);
+  }
+  .fab {
     background:var(--accent); color:var(--on-accent); border:0; border-radius:999px;
-    padding:14px 22px; font:inherit; font-weight:600; cursor:pointer;
+    padding:14px 20px; font:inherit; font-weight:600; cursor:pointer; white-space:nowrap;
     box-shadow:0 6px 20px rgba(123,30,58,.35);
   }
+  .fab.alt { background:var(--surface); color:var(--accent); border:1px solid var(--border); }
+
+  /* ---------- Ajout en lot ---------- */
+  .lot { padding:18px; display:grid; gap:12px; }
+  .lot h2 { margin:0; font-size:1.35rem; }
+  .lot .photo-pick { min-height:90px; }
+  .progress { height:6px; border-radius:999px; background:var(--border); overflow:hidden; }
+  .progress div { height:100%; width:0; background:var(--accent); transition:width .3s; }
+  .lot-list { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+  .lot-item { display:grid; grid-template-columns:auto 1fr; gap:10px; padding:10px; border:1px solid var(--border); border-radius:12px; }
+  .lot-item.off { opacity:.45; }
+  .lot-item img { width:48px; height:60px; object-fit:cover; border-radius:6px; }
+  .lot-side { display:grid; gap:6px; justify-items:center; align-content:start; }
+  .lot-side input[type=checkbox] { width:22px; height:22px; accent-color:var(--accent); }
+  .lot-fields { display:grid; gap:6px; min-width:0; }
+  .lot-fields input { padding:7px 9px; font-size:.95rem; }
+  .lot-row { display:grid; grid-template-columns:1fr 88px; gap:6px; }
+  .lot-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:.8rem; color:var(--muted); }
+  .lot-qty { display:flex; align-items:center; gap:4px; }
+  .lot-qty button { width:30px; height:30px; border-radius:8px; border:0; background:var(--border); color:var(--text); font:inherit; font-weight:700; cursor:pointer; }
+  .lot-qty span { min-width:22px; text-align:center; font-weight:700; color:var(--text); }
+  .etat-ok { color:var(--ok); } .etat-err { color:var(--passe); }
 
   /* ---------- Fenêtre d'ajout / modification ---------- */
   dialog {
@@ -144,6 +169,7 @@
   .valeur { font-size:.8rem; color:var(--muted); margin-top:4px; }
 
   @media (max-width:600px) {
+    .lot { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
     dialog { width:100%; max-width:100%; height:100dvh; max-height:100dvh; border-radius:0; margin:0; }
     form { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
   }
@@ -180,7 +206,29 @@
   </div>
 </main>
 
-<button class="fab" id="btnAdd">+ Ajouter une bouteille</button>
+<div class="fabs">
+  <button class="fab" id="btnAdd">+ Ajouter une bouteille</button>
+  <button class="fab alt" id="btnLot" aria-label="Ajouter plusieurs bouteilles en photo">📸 En lot</button>
+</div>
+
+<dialog id="dlgLot">
+  <div class="lot">
+    <h2>Ajout en lot</h2>
+    <p class="search-help">Placez 4 à 8 bouteilles debout, étiquettes bien visibles face à l'objectif. Vous pouvez ajouter plusieurs photos, une à une ou d'un coup.</p>
+    <label class="photo-pick">
+      <input type="file" id="lotPhotos" accept="image/*" multiple hidden>
+      <span>📸 Prendre ou choisir des photos</span>
+    </label>
+    <p class="search-status" id="lotStatus" hidden></p>
+    <div class="progress" id="lotProgress" hidden><div></div></div>
+    <ul class="lot-list" id="lotList"></ul>
+    <div class="actions">
+      <button type="button" class="btn secondary" id="lotClose">Fermer</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" id="lotGo" hidden>Ajouter</button>
+    </div>
+  </div>
+</dialog>
 
 <dialog id="dlg">
   <form id="form" novalidate>
@@ -332,18 +380,18 @@ const cleVin = (b) => [norm(b.domaine), norm(b.cuvee), norm(b.appellation), b.mi
 const nouvelId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 // Réduit la photo (~1200 px) pour qu'elle prenne peu de place
-function compresser(file) {
+function compresser(file, maxPx = 1200, qualite = 0.8) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const ratio = Math.min(1, 1200 / Math.max(img.width, img.height));
+      const ratio = Math.min(1, maxPx / Math.max(img.width, img.height));
       const canvas = document.createElement('canvas');
       canvas.width = Math.round(img.width * ratio);
       canvas.height = Math.round(img.height * ratio);
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL('image/jpeg', 0.8));
+      resolve(canvas.toDataURL('image/jpeg', qualite));
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image illisible')); };
     img.src = url;
@@ -529,6 +577,22 @@ function oublierCode() {
   try { localStorage.removeItem('ma-cave-code'); } catch {}
 }
 
+// Appel à la fonction Supabase (recherche ou détection), avec gestion du code d'accès
+async function appelerAPI(corps, code) {
+  const r = await fetch(API_RECHERCHE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-code-acces': code },
+    body: JSON.stringify(corps),
+  });
+  const f = await r.json().catch(() => ({}));
+  if (r.status === 401) {
+    oublierCode();
+    throw new Error('code d\'accès incorrect. Réessayez pour le saisir à nouveau.');
+  }
+  if (!r.ok) throw new Error(f.erreur || f.message || `Erreur ${r.status}`);
+  return f;
+}
+
 async function rechercherVin() {
   if ($('#btnSearch').disabled) return; // une recherche est déjà en cours
   let requete = $('#q').value.trim();
@@ -553,17 +617,7 @@ async function rechercherVin() {
   bouton.disabled = true;
   statutRecherche(image ? 'Lecture de l\'étiquette et recherche sur internet…' : 'Recherche en cours sur internet…', false, true);
   try {
-    const r = await fetch(API_RECHERCHE, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-code-acces': code },
-      body: JSON.stringify(image ? { requete, image } : { requete }),
-    });
-    const f = await r.json().catch(() => ({}));
-    if (r.status === 401) {
-      oublierCode();
-      throw new Error('code d\'accès incorrect. Relancez la recherche pour le saisir à nouveau.');
-    }
-    if (!r.ok) throw new Error(f.erreur || f.message || `Erreur ${r.status}`);
+    const f = await appelerAPI(image ? { requete, image } : { requete }, code);
     if (!f.trouve) {
       statutRecherche(f.message || 'Vin introuvable. Essayez une photo plus nette ou tapez quelques mots.', true);
       return;
@@ -683,6 +737,200 @@ $('#chips').addEventListener('click', (e) => {
 $('#search').addEventListener('input', afficher);
 $('#sort').addEventListener('change', afficher);
 $('#btnAdd').onclick = () => ouvrirFormulaire();
+
+/* ---------- Ajout en lot (plusieurs bouteilles par photo) ---------- */
+let lot = [];          // vins détectés, en attente de validation
+let lotOccupe = false; // détection ou ajout en cours
+
+function lotStatut(txt, erreur = false, enCours = false) {
+  const el = $('#lotStatus');
+  el.hidden = !txt;
+  el.className = 'search-status' + (erreur ? ' err' : '');
+  el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
+}
+function lotProgression(fait, total) {
+  $('#lotProgress').hidden = !total;
+  $('#lotProgress div').style.width = total ? `${Math.round((fait / total) * 100)}%` : '0';
+}
+
+function afficherLot() {
+  $('#lotList').innerHTML = lot.map((v, i) => `
+    <li class="lot-item ${v.coche ? '' : 'off'}" data-i="${i}">
+      <div class="lot-side">
+        <input type="checkbox" data-k="coche" ${v.coche ? 'checked' : ''} aria-label="Ajouter ce vin" ${lotOccupe ? 'disabled' : ''}>
+        ${v.miniature ? `<img src="${v.miniature}" alt="">` : ''}
+      </div>
+      <div class="lot-fields">
+        <input data-k="domaine" value="${esc(v.domaine)}" placeholder="Domaine" ${lotOccupe ? 'disabled' : ''}>
+        <div class="lot-row">
+          <input data-k="appellation" value="${esc(v.appellation)}" placeholder="Appellation" ${lotOccupe ? 'disabled' : ''}>
+          <input data-k="millesime" type="number" inputmode="numeric" value="${esc(v.millesime ?? '')}" placeholder="Millésime" ${lotOccupe ? 'disabled' : ''}>
+        </div>
+        <div class="lot-meta">
+          <div class="lot-qty">
+            <button type="button" data-act="moins" aria-label="Moins" ${lotOccupe ? 'disabled' : ''}>−</button>
+            <span>${v.nombre}</span>
+            <button type="button" data-act="plus" aria-label="Plus" ${lotOccupe ? 'disabled' : ''}>+</button>
+          </div>
+          ${v.cuvee ? `<span>${esc(v.cuvee)}</span>` : ''}
+          ${v.certitude && v.certitude !== 'haute' ? `<span>Lecture ${esc(v.certitude)} — vérifiez</span>` : ''}
+          ${v.position ? `<span>📍 ${esc(v.position)}</span>` : ''}
+          ${v.etat === 'ok' ? '<span class="etat-ok">✓ ajouté</span>' : ''}
+          ${v.etat === 'cours' ? '<span><span class="spin"></span>recherche…</span>' : ''}
+          ${v.etat === 'err' ? '<span class="etat-err">ajouté sans fiche complète</span>' : ''}
+        </div>
+      </div>
+    </li>`).join('');
+
+  const choisis = lot.filter((v) => v.coche && !v.etat);
+  const n = choisis.reduce((s, v) => s + v.nombre, 0);
+  $('#lotGo').hidden = !choisis.length;
+  $('#lotGo').disabled = lotOccupe;
+  $('#lotGo').textContent = `Ajouter ${choisis.length} vin${choisis.length > 1 ? 's' : ''} (${n} bouteille${n > 1 ? 's' : ''})`;
+}
+
+$('#lotList').addEventListener('input', (e) => {
+  const k = e.target.dataset.k;
+  const i = e.target.closest('.lot-item')?.dataset.i;
+  if (!k || i === undefined) return;
+  const v = lot[i];
+  if (k === 'coche') { v.coche = e.target.checked; afficherLot(); return; }
+  v[k] = k === 'millesime' ? (parseInt(e.target.value, 10) || null) : e.target.value;
+});
+$('#lotList').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (!act) return;
+  const v = lot[e.target.closest('.lot-item').dataset.i];
+  v.nombre = Math.max(1, v.nombre + (act === 'plus' ? 1 : -1));
+  afficherLot();
+});
+
+// 1) Détection des vins sur chaque photo choisie
+$('#lotPhotos').addEventListener('change', async (e) => {
+  const fichiers = [...e.target.files];
+  e.target.value = '';
+  if (!fichiers.length || lotOccupe) return;
+  const code = codeAcces();
+  if (!code) { lotStatut('Un code d\'accès est nécessaire.', true); return; }
+
+  lotOccupe = true;
+  afficherLot();
+  let trouves = 0, illisibles = 0, echecs = 0;
+  for (let n = 0; n < fichiers.length; n++) {
+    lotStatut(`Lecture des étiquettes… photo ${n + 1} sur ${fichiers.length}`, false, true);
+    lotProgression(n, fichiers.length);
+    try {
+      const image = await compresser(fichiers[n], 1600, 0.85);
+      const miniature = await compresser(fichiers[n], 500, 0.75);
+      const res = await appelerAPI({ mode: 'detecter', image }, code);
+      illisibles += res.nonIdentifiees || 0;
+      for (const v of res.vins || []) {
+        const vin = {
+          domaine: v.domaine || '', cuvee: v.cuvee || '', appellation: v.appellation || '',
+          millesime: Number(v.millesime) || null, couleur: v.couleur || '',
+          nombre: Number(v.nombre) || 1, certitude: v.certitude || '', position: v.position || '',
+          miniature, coche: true, etat: '',
+        };
+        // Même vin déjà détecté sur une autre photo ? On additionne.
+        const deja = lot.find((x) => !x.etat && cleVin(x) === cleVin(vin));
+        if (deja) deja.nombre += vin.nombre; else { lot.push(vin); trouves++; }
+      }
+    } catch (err) {
+      echecs++;
+      if (/code d'accès/.test(err.message)) { lotStatut('La recherche a échoué : ' + err.message, true); break; }
+    }
+    afficherLot();
+  }
+  lotOccupe = false;
+  lotProgression(0, 0);
+  afficherLot();
+  if (!/code d'accès/.test($('#lotStatus').textContent)) {
+    const msg = [`${trouves} vin${trouves > 1 ? 's' : ''} repéré${trouves > 1 ? 's' : ''}.`];
+    if (illisibles) msg.push(`${illisibles} bouteille${illisibles > 1 ? 's' : ''} illisible${illisibles > 1 ? 's' : ''} (à ajouter à la main ou à reprendre en photo).`);
+    if (echecs) msg.push(`${echecs} photo${echecs > 1 ? 's' : ''} n'a pas pu être lue.`);
+    if (trouves) msg.push('Vérifiez la liste, corrigez si besoin, puis appuyez sur « Ajouter ».');
+    lotStatut(msg.join(' '), !trouves);
+  }
+});
+
+// 2) Recherche internet pour chaque vin retenu, puis ajout à la cave
+$('#lotGo').onclick = async () => {
+  const choisis = lot.filter((v) => v.coche && !v.etat);
+  if (!choisis.length || lotOccupe) return;
+  const code = codeAcces();
+  if (!code) return;
+
+  lotOccupe = true;
+  let fait = 0, cumules = 0, incomplets = 0;
+  const total = choisis.length;
+  lotStatut(`Recherche des fiches… 0 sur ${total}`, false, true);
+  lotProgression(0, total);
+
+  const traiter = async (v) => {
+    v.etat = 'cours';
+    afficherLot();
+    let fiche = null;
+    try {
+      const requete = [v.domaine, v.cuvee, v.appellation, v.millesime].filter(Boolean).join(' ');
+      const f = await appelerAPI({ requete }, code);
+      if (f.trouve) fiche = f;
+    } catch { /* on ajoute quand même le vin avec ce qui a été lu */ }
+
+    const b = {
+      domaine: fiche?.domaine || v.domaine,
+      cuvee: fiche?.cuvee ?? v.cuvee,
+      appellation: fiche?.appellation || v.appellation,
+      region: fiche?.region || '',
+      millesime: v.millesime || Number(fiche?.millesime) || '',
+      couleur: COULEURS.includes(fiche?.couleur) ? fiche.couleur : (COULEURS.includes(v.couleur) ? v.couleur : 'Rouge'),
+      quantite: v.nombre,
+      boireDe: Number(fiche?.boireDe) || '',
+      boireA: Number(fiche?.boireA) || '',
+      prix: '', emplacement: '', notes: '',
+      ...(fiche ? Object.fromEntries(CHAMPS_FICHE.map((k) => [k, fiche[k] ?? ''])) : {}),
+    };
+    const existant = bottles.find((x) => cleVin(x) === cleVin(b));
+    if (existant) {
+      existant.quantite += b.quantite;
+      cumules++;
+    } else {
+      bottles.push({ id: nouvelId(), ...b, photo: v.miniature || null, ajoute: Date.now() });
+    }
+    if (!fiche) incomplets++;
+    v.etat = fiche ? 'ok' : 'err';
+    fait++;
+    lotStatut(`Recherche des fiches… ${fait} sur ${total}`, false, true);
+    lotProgression(fait, total);
+    afficherLot();
+  };
+
+  // 3 recherches en parallèle maximum
+  const file = [...choisis];
+  await Promise.all([1, 2, 3].map(async () => {
+    while (file.length) await traiter(file.shift());
+  }));
+
+  await enregistrer();
+  afficher();
+  lotOccupe = false;
+  lotProgression(0, 0);
+  afficherLot();
+  const msg = [`✓ ${total} vin${total > 1 ? 's' : ''} ajouté${total > 1 ? 's' : ''} à la cave.`];
+  if (cumules) msg.push(`${cumules} déjà présent${cumules > 1 ? 's' : ''} : quantités additionnées.`);
+  if (incomplets) msg.push(`${incomplets} sans fiche complète : ouvrez-le${incomplets > 1 ? 's' : ''} et relancez 🔍 Rechercher.`);
+  lotStatut(msg.join(' '), false);
+};
+
+$('#btnLot').onclick = () => {
+  if (!lotOccupe) {
+    lot = [];
+    lotStatut('');
+    lotProgression(0, 0);
+    afficherLot();
+  }
+  $('#dlgLot').showModal();
+};
+$('#lotClose').onclick = () => $('#dlgLot').close();
 
 /* ---------- Sauvegarde / restauration ---------- */
 $('#btnExport').onclick = () => {

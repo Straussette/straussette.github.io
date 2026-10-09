@@ -42,6 +42,31 @@ Règles :
 - Si tu ne trouves pas le vin, renvoie {"trouve": false, "message": "explication courte"}.
 - Réponds en français.`;
 
+// Mode « détecter » : repérer toutes les bouteilles d'une photo (sans recherche web)
+const CONSIGNE_DETECTION = `Tu es un sommelier expert. On te montre une photo contenant une ou plusieurs bouteilles de vin.
+Repère chaque bouteille dont l'étiquette est au moins partiellement lisible, lis son étiquette, et regroupe les bouteilles identiques (même domaine, cuvée, appellation et millésime).
+Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
+{
+  "vins": [
+    {
+      "domaine": "nom du domaine ou château",
+      "cuvee": "nom de la cuvée, ou chaîne vide",
+      "appellation": "appellation",
+      "millesime": 2015,
+      "couleur": "une valeur parmi ${COULEURS.join(", ")}",
+      "nombre": 2,
+      "certitude": "haute | moyenne | faible",
+      "position": "où elle est sur la photo, ex. 'à gauche', '3e en partant de la gauche'"
+    }
+  ],
+  "nonIdentifiees": 1
+}
+Règles :
+- millesime est un nombre, ou null s'il n'est pas visible (ne l'invente pas).
+- Complète l'appellation et la couleur d'après tes connaissances si l'étiquette ne les montre pas clairement.
+- nonIdentifiees = nombre de bouteilles visibles dont tu n'as pas pu lire l'étiquette.
+- S'il n'y a aucune bouteille de vin, renvoie {"vins": [], "nonIdentifiees": 0}.`;
+
 function reponse(corps: unknown, statut: number, cors: Record<string, string>) {
   return new Response(JSON.stringify(corps), {
     status: statut,
@@ -54,6 +79,50 @@ function extraireJSON(texte: string) {
   const fin = texte.lastIndexOf("}");
   if (debut === -1 || fin <= debut) throw new Error("Pas de JSON dans la réponse");
   return JSON.parse(texte.slice(debut, fin + 1));
+}
+
+async function detecter(
+  cle: string,
+  image: { media_type: string; data: string },
+  cors: Record<string, string>,
+) {
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: MODELE,
+        max_tokens: 3000,
+        system: CONSIGNE_DETECTION,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", ...image } },
+            { type: "text", text: "Liste les vins visibles sur cette photo." },
+          ],
+        }],
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      console.error("Erreur API Anthropic", data);
+      return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
+    }
+    const texte = (data.content ?? [])
+      .filter((b: { type: string }) => b.type === "text")
+      .map((b: { text: string }) => b.text)
+      .join("\n");
+    const res = extraireJSON(texte);
+    const vins = (Array.isArray(res.vins) ? res.vins : []).map((v: Record<string, unknown>) => ({
+      ...v,
+      couleur: COULEURS.includes(String(v.couleur)) ? v.couleur : "",
+      nombre: Math.max(1, Math.min(48, Number(v.nombre) || 1)),
+    }));
+    return reponse({ vins, nonIdentifiees: Number(res.nonIdentifiees) || 0 }, 200, cors);
+  } catch (e) {
+    console.error(e);
+    return reponse({ erreur: "Impossible de lire la photo, réessayez." }, 500, cors);
+  }
 }
 
 Deno.serve(async (req) => {
@@ -80,10 +149,12 @@ Deno.serve(async (req) => {
   if (!cle) return reponse({ erreur: "Secret ANTHROPIC_API_KEY manquant dans Supabase" }, 500, cors);
 
   let requete = "";
+  let mode = "rechercher";
   let image: { media_type: string; data: string } | null = null;
   try {
     const corps = await req.json();
     requete = String(corps.requete ?? "").trim();
+    if (corps.mode === "detecter") mode = "detecter";
     if (corps.image) {
       // Photo de l'étiquette envoyée en "data URL" (data:image/jpeg;base64,....)
       const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(corps.image));
@@ -94,6 +165,11 @@ Deno.serve(async (req) => {
   } catch {
     return reponse({ erreur: "Requête invalide" }, 400, cors);
   }
+  if (mode === "detecter") {
+    if (!image) return reponse({ erreur: "Photo manquante" }, 400, cors);
+    return await detecter(cle, image, cors);
+  }
+
   if (!image && requete.length < 3) return reponse({ erreur: "Décrivez le vin (domaine, appellation, millésime…) ou prenez l'étiquette en photo" }, 400, cors);
   if (requete.length > 300) requete = requete.slice(0, 300);
 
