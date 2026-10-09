@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-09.9">
+<meta name="app-version" content="2026-10-09.10">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -155,6 +155,14 @@
   .btn.petit-btn { padding:6px 10px; font-size:.85rem; }
   .paiement { white-space:pre-wrap; font-family:ui-monospace, Menlo, monospace; font-size:.85rem; padding:8px; border-radius:8px; background:var(--border); }
 
+  /* ---------- Récapitulatif ---------- */
+  .recap-table { width:100%; border-collapse:collapse; font-size:.88rem; }
+  .recap-table th, .recap-table td { padding:6px 4px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+  .recap-table th { font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:600; }
+  .recap-table .n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .recap-table tfoot td { font-weight:700; border-bottom:0; }
+  .recap-pers { display:grid; gap:4px; padding:10px; border:1px solid var(--border); border-radius:12px; }
+
   /* ---------- Ajout en lot ---------- */
   .lot { padding:18px; display:grid; gap:12px; }
   .lot h2 { margin:0; font-size:1.35rem; }
@@ -297,6 +305,10 @@
   <p class="search-status" id="adminStatut" hidden></p>
   <ul class="liste-simple" id="listeAdmin" style="margin-top:12px"></ul>
 </section>
+
+<dialog id="dlgRecap">
+  <div class="cmd" id="recapContenu"></div>
+</dialog>
 
 <dialog id="dlgCommande">
   <div class="cmd" id="cmdContenu"></div>
@@ -1838,7 +1850,8 @@ function afficherCommande() {
         <select data-act="statut" aria-label="Statut de la commande" style="width:auto">
           ${Object.entries(STATUTS).map(([k, v]) => `<option value="${k}" ${k === c.statut ? 'selected' : ''}>Statut : ${v[0]}</option>`).join('')}
         </select>
-        <button class="btn secondary petit-btn" data-act="editer">✏️ Infos</button>` : ''}
+        <button class="btn secondary petit-btn" data-act="editer">✏️ Infos</button>
+        <button class="btn secondary petit-btn" data-act="recap">📋 Récapitulatif</button>` : ''}
     </div>
 
     <section>
@@ -1966,6 +1979,141 @@ function afficherCommande() {
         : (ouverte && mien && !mien.bouteilles ? '<button class="btn danger" data-act="quitter">Quitter</button>' : '')}
     </div>`;
 }
+
+/* ---------- Récapitulatif de la commande (organisateur) ---------- */
+function donneesRecap(c) {
+  const parts = (vinId) => c.commande_parts.filter((x) => x.vin_id === vinId && x.quantite > 0);
+  const vins = c.commande_vins.map((v) => {
+    const q = parts(v.id).reduce((s2, x) => s2 + x.quantite, 0);
+    return { v, nom: nomVin(v.data), prix: Number(v.prix) || 0, q, montant: q * (Number(v.prix) || 0), caisse: Number(v.data?.caisse) || 0 };
+  });
+  const cpt = comptes(c);
+  const personnes = cpt.filter((x) => x.bouteilles > 0 || x.rembs.length).map((x) => ({
+    ...x,
+    nom: nomPersonne(x.p),
+    estMoi: x.p.user_id === moi(),
+    lignes: c.commande_vins.map((v) => {
+      const q = (c.commande_parts.find((y) => y.vin_id === v.id && y.user_id === x.p.user_id) || {}).quantite || 0;
+      return { nom: nomVin(v.data), q, prix: Number(v.prix) || 0, montant: q * (Number(v.prix) || 0) };
+    }).filter((l) => l.q > 0),
+  }));
+  const totalQ = vins.reduce((s2, x) => s2 + x.q, 0);
+  const totalM = vins.reduce((s2, x) => s2 + x.montant, 0);
+  const rembourse = cpt.reduce((s2, x) => s2 + x.confirme, 0);
+  const declare = cpt.reduce((s2, x) => s2 + x.declare, 0);
+  const reste = cpt.reduce((s2, x) => s2 + x.reste, 0);
+  return { vins, personnes, totalQ, totalM, rembourse, declare, reste };
+}
+
+function ouvrirRecap(c) {
+  const d = donneesRecap(c);
+  const st = STATUTS[c.statut];
+  $('#recapContenu').innerHTML = `
+    <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start">
+      <div>
+        <h2>Récapitulatif</h2>
+        <div class="petit">${esc(c.titre)}${c.fournisseur ? ' · ' + esc(c.fournisseur) : ''}${c.date_commande ? ' · ' + fmtDate(c.date_commande) : ''}</div>
+      </div>
+      <span class="pastille ${st[1]}">${st[0]}</span>
+    </div>
+
+    <section>
+      <h3>Totaux</h3>
+      <div class="cmd-pers">
+        <div class="ligne"><span>Bouteilles</span><strong>${d.totalQ}</strong></div>
+        <div class="ligne"><span>Montant de la commande</span><strong>${fmtEur(d.totalM)}</strong></div>
+        <div class="ligne"><span>Remboursé (confirmé)</span><span>${fmtEur(d.rembourse)}</span></div>
+        ${d.declare ? `<div class="ligne"><span>Virements à confirmer</span><span>${fmtEur(d.declare)}</span></div>` : ''}
+        <div class="ligne"><span>Reste dû par les participants</span><strong style="color:${d.reste ? 'var(--passe)' : 'var(--ok)'}">${fmtEur(d.reste)}</strong></div>
+      </div>
+    </section>
+
+    <section>
+      <h3>Par vin — à commander</h3>
+      <table class="recap-table">
+        <thead><tr><th>Vin</th><th class="n">Bout.</th><th class="n">Prix</th><th class="n">Total</th></tr></thead>
+        <tbody>
+          ${d.vins.map((x) => `<tr>
+            <td>${esc(x.nom)}${x.caisse > 1 && x.q ? `<div class="petit">${etatCaisses(x.q, x.caisse)}</div>` : ''}</td>
+            <td class="n">${x.q}</td><td class="n">${fmtEur(x.prix)}</td><td class="n">${fmtEur(x.montant)}</td></tr>`).join('')}
+        </tbody>
+        <tfoot><tr><td>Total</td><td class="n">${d.totalQ}</td><td></td><td class="n">${fmtEur(d.totalM)}</td></tr></tfoot>
+      </table>
+    </section>
+
+    <section>
+      <h3>Par personne</h3>
+      ${d.personnes.length ? d.personnes.map((x) => `
+        <div class="recap-pers">
+          <div class="ligne"><strong>${esc(x.nom)}${x.estMoi ? ' (moi)' : ''}${x.orga ? ' · organisateur' : ''}</strong><strong>${fmtEur(x.du)}</strong></div>
+          ${x.lignes.map((l) => `<div class="ligne petit"><span>${l.q} × ${esc(l.nom)}</span><span>${fmtEur(l.montant)}</span></div>`).join('')}
+          <div class="petit">${x.bouteilles} bouteille${x.bouteilles > 1 ? 's' : ''}${x.orga ? '' :
+            ` · ${x.reste ? `<strong style="color:var(--passe)">reste ${fmtEur(x.reste)}</strong>` : (x.declare ? `virement de ${fmtEur(x.declare)} à confirmer` : '✓ réglé')}`}${
+            c.statut === 'recue' && !x.orga && x.bouteilles ? (x.p.recupere ? ' · ✓ récupérées' : ' · 📦 à récupérer') : ''}</div>
+        </div>`).join('') : '<p class="petit">Personne n\'a encore choisi de bouteilles.</p>'}
+    </section>
+
+    <p class="search-status" id="recapStatut" hidden></p>
+    <div class="actions" style="flex-wrap:wrap">
+      <button class="btn secondary" data-recap="fermer">Fermer</button>
+      <span class="spacer"></span>
+      <button class="btn secondary petit-btn" data-recap="csv">⬇️ Excel (CSV)</button>
+      <button class="btn secondary petit-btn" data-recap="complet">Copier le récap</button>
+      <button class="btn primary petit-btn" data-recap="caviste">Copier le bon de commande</button>
+    </div>`;
+  $('#dlgRecap').dataset.cmd = c.id;
+  $('#dlgRecap').showModal();
+}
+
+function texteBonDeCommande(c, d) {
+  return [`Commande « ${c.titre} »${c.fournisseur ? ' — ' + c.fournisseur : ''}`, '',
+    ...d.vins.filter((x) => x.q > 0).map((x) => `- ${x.q} × ${x.nom}${x.prix ? ` (${fmtEur(x.prix)})` : ''}`), '',
+    `Total : ${d.totalQ} bouteilles — ${fmtEur(d.totalM)}`].join('\n');
+}
+function texteRecapComplet(c, d) {
+  return [texteBonDeCommande(c, d), '', 'Par personne :',
+    ...d.personnes.flatMap((x) => [`${x.nom} — ${fmtEur(x.du)}${x.orga ? '' : (x.reste ? ` (reste ${fmtEur(x.reste)})` : ' (réglé)')}`,
+      ...x.lignes.map((l) => `   ${l.q} × ${l.nom}`)])].join('\n');
+}
+function csvRecap(c, d) {
+  const q = (t) => `"${String(t ?? '').replace(/"/g, '""')}"`;
+  const num = (n) => String(Math.round((Number(n) || 0) * 100) / 100).replace('.', ',');
+  const lignes = [['Personne', 'Vin', 'Bouteilles', 'Prix unitaire', 'Montant'].map(q).join(';')];
+  for (const x of d.personnes) for (const l of x.lignes) lignes.push([q(x.nom), q(l.nom), l.q, num(l.prix), num(l.montant)].join(';'));
+  lignes.push('');
+  lignes.push([q('TOTAL PAR VIN'), '', '', '', ''].join(';'));
+  for (const x of d.vins) lignes.push([q(''), q(x.nom), x.q, num(x.prix), num(x.montant)].join(';'));
+  lignes.push([q('TOTAL'), q(''), d.totalQ, '', num(d.totalM)].join(';'));
+  return '\ufeff' + lignes.join('\r\n'); // BOM : accents corrects dans Excel
+}
+
+$('#recapContenu').addEventListener('click', async (e) => {
+  const act = e.target.closest('[data-recap]')?.dataset.recap;
+  if (!act) return;
+  if (act === 'fermer') return $('#dlgRecap').close();
+  const c = commandes.find((x) => x.id === $('#dlgRecap').dataset.cmd);
+  if (!c) return;
+  const d = donneesRecap(c);
+  const st = (t, err) => statutGenerique($('#recapStatut'), t, err);
+  if (act === 'caviste' || act === 'complet') {
+    const texte = act === 'caviste' ? texteBonDeCommande(c, d) : texteRecapComplet(c, d);
+    try {
+      await navigator.clipboard.writeText(texte);
+      st(act === 'caviste' ? 'Bon de commande copié : collez-le dans votre e-mail au caviste.' : 'Récapitulatif copié.');
+    } catch {
+      if (navigator.share) { try { await navigator.share({ title: c.titre, text: texte }); } catch {} }
+      else st('Copie impossible sur cet appareil.', true);
+    }
+  }
+  if (act === 'csv') {
+    const url = URL.createObjectURL(new Blob([csvRecap(c, d)], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `commande-${c.titre.replace(/[^\w-]+/g, '-').toLowerCase()}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+});
 
 /* ---------- Caisses et multiples ---------- */
 // Pas de choix : l'organisateur impose par exemple des multiples de 3 ou 6
@@ -2153,6 +2301,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
     } catch { /* partage annulé */ }
     return;
   }
+  if (act === 'recap') return ouvrirRecap(c);
   if (act === 'copierPaiement') {
     try { await navigator.clipboard.writeText(c.infos_paiement); cmdStatut('Coordonnées copiées.'); } catch { cmdStatut('Copie impossible : sélectionnez le texte.', true); }
     return;
