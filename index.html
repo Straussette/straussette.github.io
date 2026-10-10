@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.10">
+<meta name="app-version" content="2026-10-10.11">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -94,10 +94,12 @@
   }
   .card-main img, .ph { width:56px; height:72px; border-radius:8px; object-fit:cover; flex:none; }
   .ph { display:grid; place-items:center; font-size:1.5rem; background:color-mix(in srgb, var(--c) 25%, var(--surface)); }
+  .ph svg { width:100%; height:100%; display:block; }
+  .ph.vin { background:linear-gradient(180deg, color-mix(in srgb, var(--c) 10%, var(--surface)), color-mix(in srgb, var(--c) 22%, var(--surface))); }
   .c-rouge { --c:var(--c-rouge); } .c-blanc { --c:var(--c-blanc); } .c-rose { --c:var(--c-rose); }
   .c-effervescent { --c:var(--c-effervescent); } .c-liquoreux { --c:var(--c-liquoreux); }
   .info { min-width:0; }
-  .name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .name { font-weight:600; line-height:1.25; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
   .cuvee { font-weight:400; color:var(--muted); }
   .sub { color:var(--muted); font-size:.9rem; display:flex; align-items:center; gap:6px; margin-top:2px; }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--c); flex:none; }
@@ -717,6 +719,39 @@ function niveauCru(b) {
   return '';
 }
 
+// Illustration de bouteille : silhouette selon la couleur et le format (plus jolie qu'une photo de reconnaissance)
+function svgBouteille(b) {
+  const c = slug(b.couleur);
+  const teintes = {
+    rouge: ['#6d1630', '#3f0a1b'], blanc: ['#e3cf86', '#b99a3c'], rose: ['#f0a0ae', '#c96478'],
+    effervescent: ['#d9c97a', '#a8923b'], liquoreux: ['#d8952f', '#9c5d12'],
+  };
+  const [clair, fonce] = teintes[c] || teintes.rouge;
+  const f = facteurFormat(b.format);
+  const grand = f >= 2, petit = f > 0 && f < 1;
+  // Bourgogne (épaules tombantes) ou Bordeaux (épaules marquées) selon la région
+  const bordeaux = /bordeaux|medoc|graves|pomerol|emilion|margaux|pauillac|julien|esteph/i.test(sansAccent(`${b.region} ${b.appellation}`));
+  const sx = grand ? 1.12 : petit ? 0.82 : 1, sy = grand ? 1.08 : petit ? 0.82 : 1;
+  const corps = bordeaux
+    ? 'M24 6h8v16c0 4 8 6 8 13v52c0 3-2 5-5 5H21c-3 0-5-2-5-5V35c0-7 8-9 8-13z'
+    : 'M24 6h8v14c0 8 10 12 10 24v43c0 3-2 5-5 5H19c-3 0-5-2-5-5V44c0-12 10-16 10-24z';
+  const bulles = c === 'effervescent'
+    ? '<circle cx="24" cy="70" r="1.6" fill="#fff" opacity=".7"/><circle cx="31" cy="62" r="1.2" fill="#fff" opacity=".6"/><circle cx="27" cy="54" r="1" fill="#fff" opacity=".5"/>' : '';
+  const id = 'g' + Math.random().toString(36).slice(2, 8);
+  return `<svg viewBox="0 0 56 100" xmlns="http://www.w3.org/2000/svg">
+    <defs><linearGradient id="${id}" x1="0" x2="1"><stop offset="0" stop-color="${fonce}"/><stop offset=".45" stop-color="${clair}"/><stop offset="1" stop-color="${fonce}"/></linearGradient></defs>
+    <g transform="translate(28 96) scale(${sx} ${sy}) translate(-28 -96)">
+      <path d="${corps}" fill="url(#${id})"/>
+      <rect x="23.5" y="4" width="9" height="10" rx="1.5" fill="${c === 'effervescent' ? '#c8b25a' : '#2b1d20'}" opacity=".9"/>
+      <rect x="${bordeaux ? 18 : 17}" y="58" width="${bordeaux ? 20 : 22}" height="17" rx="2" fill="#fbf7ef" opacity=".92"/>
+      <rect x="${bordeaux ? 21 : 20}" y="63" width="${bordeaux ? 14 : 16}" height="1.6" rx=".8" fill="${fonce}" opacity=".55"/>
+      <rect x="${bordeaux ? 23 : 22}" y="67" width="${bordeaux ? 10 : 12}" height="1.2" rx=".6" fill="${fonce}" opacity=".35"/>
+      ${bulles}
+      <path d="M${bordeaux ? 20 : 18} 40c0 0 1 30 0 44" stroke="#fff" stroke-width="2" opacity=".18" fill="none" stroke-linecap="round"/>
+    </g>
+  </svg>`;
+}
+
 /* ---------- Affichage ---------- */
 function carte(b) {
   const st = statut(b);
@@ -725,7 +760,7 @@ function carte(b) {
   return `
     <li class="card ${b.quantite <= 0 ? 'epuise' : ''}" data-id="${esc(b.id)}">
       <button class="card-main" data-act="edit">
-        ${b.photo ? `<img src="${b.photo}" alt="">` : `<div class="ph c-${c}">🍷</div>`}
+        <div class="ph vin c-${c}" aria-hidden="true">${svgBouteille(b)}</div>
         <div class="info">
           <div class="name">${esc(b.domaine || b.appellation || 'Sans nom')}${b.cuvee ? ` <span class="cuvee">· ${esc(b.cuvee)}</span>` : ''}${niveauCru(b) === 'gc' ? '<span class="cru">GC</span>' : niveauCru(b) === 'pc' ? '<span class="cru">1er cru</span>' : ''}${b.format ? `<span class="cru" style="color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, transparent)">${esc(b.format)}</span>` : ''}</div>
           <div class="sub"><span class="dot c-${c}"></span>${esc(sousTitre)}</div>
