@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.6">
+<meta name="app-version" content="2026-10-10.7">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -1587,8 +1587,8 @@ $('#btnImport').onclick = () => $('#importFile').click();
 $('#btnVider').onclick = async () => {
   if (!bottles.length) return;
   const n = bottles.length;
-  if (!confirm(`Supprimer définitivement les ${n} vins de votre cave (y compris les vins bus, photos et notes)${session ? ', sur tous vos appareils' : ''} ?\n\nConseil : faites d'abord « Sauvegarder ma cave ».`)) return;
-  const mot = prompt('Pour confirmer, tapez VIDER :', '');
+  if (!confirm(`⚠️ Êtes-vous sûr ?\n\nVous allez perdre toute votre cave : ${n} vin${n > 1 ? 's' : ''}, y compris les vins bus, les photos, les dégustations et les notes${session ? ', sur tous vos appareils' : ''}.\n\nCette action est définitive. Conseil : faites d'abord « Sauvegarder ma cave ».`)) return;
+  const mot = prompt('Dernière vérification : tapez VIDER pour tout supprimer.', '');
   if ((mot || '').trim().toUpperCase() !== 'VIDER') return alert('Rien n\'a été supprimé.');
   bottles = [];
   filtre = 'Tous';
