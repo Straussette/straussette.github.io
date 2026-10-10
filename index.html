@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.3">
+<meta name="app-version" content="2026-10-10.4">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -197,6 +197,15 @@
     overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
   }
   dialog::backdrop { background:rgba(20,10,12,.55); }
+  /* Croix de fermeture, toujours visible en haut à droite de chaque fenêtre */
+  .fermer-x {
+    position:sticky; top:calc(8px + env(safe-area-inset-top)); z-index:5; display:grid; place-items:center;
+    width:36px; height:36px; margin:8px 8px -44px auto; border:0; border-radius:50%;
+    background:color-mix(in srgb, var(--surface) 85%, transparent); color:var(--text);
+    box-shadow:0 1px 4px rgba(0,0,0,.18); font-size:1.1rem; line-height:1; cursor:pointer;
+    -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  }
+  dialog h2 { padding-right:40px; }
   form { padding:18px; display:grid; gap:12px; }
   form h2 { margin:0; font-size:1.35rem; }
   .photo-pick {
@@ -2901,6 +2910,19 @@ async function verifierMiseAJour() {
 if (location.protocol.startsWith('http')) {
   verifierMiseAJour();
   document.addEventListener('visibilitychange', () => { if (!document.hidden) verifierMiseAJour(); });
+}
+
+/* ---------- Croix de fermeture sur chaque fenêtre ---------- */
+for (const d of document.querySelectorAll('dialog')) {
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'fermer-x';
+  x.setAttribute('aria-label', 'Fermer');
+  x.textContent = '✕';
+  x.addEventListener('click', () => d.close());
+  d.prepend(x);
+  // Toucher le fond sombre autour de la fenêtre la ferme aussi
+  d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
 }
 
 /* ---------- Défilement et fenêtres ---------- */
