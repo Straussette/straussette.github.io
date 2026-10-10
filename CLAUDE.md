@@ -1,52 +1,67 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Ce fichier guide Claude Code (claude.ai/code) lorsqu'il travaille sur le code de ce dépôt.
 
-## Project
+## Projet
 
-**Ma Cave**: a French-language wine cellar web app (PWA-like), served by GitHub Pages at https://straussette.github.io. All UI text, code identifiers, comments and commit messages are in French. Keep it that way.
+**Ma Cave** : application web de gestion de cave à vin, en français, installable comme une app. Elle est hébergée par GitHub Pages à l'adresse https://straussette.github.io. Le texte de l'interface, les noms dans le code, les commentaires et les messages de commit sont en français : il faut garder cette règle.
 
-The repo holds two files:
-- `index.html`: the whole client app (HTML + CSS + vanilla JS, no dependencies, no build step).
-- `supabase/functions/chercher-vin/index.ts`: a Supabase Edge Function (Deno) that calls the Claude API.
+Le dépôt contient deux fichiers :
+- `index.html` : toute l'application côté navigateur (HTML + CSS + JavaScript sans framework, sans dépendance, sans étape de build).
+- `supabase/functions/chercher-vin/index.ts` : une fonction serveur Supabase (Deno) qui appelle l'API Claude.
 
-Database schema, RLS policies, RPCs and storage buckets live in the Supabase project and are **not** in this repo.
+Le schéma de la base, les règles d'accès (RLS), les fonctions RPC et les espaces de stockage sont configurés dans le projet Supabase et **ne sont pas** dans ce dépôt.
 
-## Commands
+## Commandes
 
-There is no build, package manager, linter or test suite.
+Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 
-- Run locally: `python3 -m http.server 8000`, then open http://localhost:8000. Calls to the edge function will fail because its CORS/origin check only accepts `https://straussette.github.io`.
-- Syntax-check the inline script:
+- Lancer en local : `python3 -m http.server 8000`, puis ouvrir http://localhost:8000. Les appels à la fonction serveur échoueront, car elle n'accepte que l'origine `https://straussette.github.io` (contrôle CORS).
+- Vérifier la syntaxe du script intégré :
   `awk '/<script>/{f=1;next}/<\/script>/{f=0}f' index.html > /tmp/app.js && node --check /tmp/app.js`
-- Deploy the app: push to the default branch; GitHub Pages serves `index.html`.
-- Deploy the function: `supabase functions deploy chercher-vin`. This needs the Supabase CLI and project access, neither of which is set up here. Secrets: `ANTHROPIC_API_KEY`, optional `CODE_ACCES`.
+- Déployer l'app : pousser sur la branche par défaut. GitHub Pages publie `index.html`.
+- Déployer la fonction : `supabase functions deploy chercher-vin`. Il faut la CLI Supabase et un accès au projet, ce qui n'est pas en place ici. Secrets : `ANTHROPIC_API_KEY`, et `CODE_ACCES` (facultatif).
 
 ## Conventions
 
-- **Bump `<meta name="app-version" content="YYYY-MM-DD.N">` in every change to `index.html`.** `verifierMiseAJour()` compares this value with the online copy and force-reloads clients when it differs, so a missing bump means users keep the old version.
-- `index.html` is organised into sections marked `/* ---------- Titre ---------- */` (both CSS and JS). Add code to the relevant section, or create a new section in the same style.
-- Theming uses CSS custom properties on `:root`, with dark mode under `prefers-color-scheme` and `[data-theme]`. Use the existing tokens (`--accent`, `--surface`, `--c-rouge`…) rather than hard-coded colours.
-- Escape interpolated values in generated HTML with `esc()`.
+- **À chaque modification de `index.html`, augmenter `<meta name="app-version" content="AAAA-MM-JJ.N">`.** `verifierMiseAJour()` compare cette valeur à celle de la version en ligne et force le rechargement quand elles diffèrent. Sans cette augmentation, les utilisateurs gardent l'ancienne version.
+- `index.html` est découpé en sections repérées par `/* ---------- Titre ---------- */`, côté CSS comme côté JS. Ajouter le code dans la section concernée, ou créer une nouvelle section dans le même style.
+- Les couleurs passent par des variables CSS définies sur `:root`, avec le mode sombre géré par `prefers-color-scheme` et `[data-theme]`. Utiliser les variables existantes (`--accent`, `--surface`, `--c-rouge`…) plutôt que des couleurs en dur.
+- Échapper les valeurs insérées dans le HTML généré avec `esc()`.
 
 ## Architecture
 
-### Client data flow (`index.html`)
-- `bottles` (global array) is the source of truth. `enregistrer()` persists it to IndexedDB (DB `ma-cave`, store `kv`, key `bottles`) and then calls `planifierSync()`.
-- The app is offline-first. When logged in, `synchroniser()` runs four steps in order: upload new photos to the storage bucket `photos/<uid>/<id>.jpg`; upsert changed rows into the `bouteilles` table (`{id, data, photo_path}`, where `data` is the bottle object minus the photo); delete rows removed locally; and, if `telecharger`, merge the account's rows back in (`recupererCompte`). Change detection relies on per-row JSON fingerprints stored in localStorage under `ma-cave-sync-<uid>`.
-- Supabase is called with raw `fetch` through `sbFetch()` (REST `/rest/v1`, auth `/auth/v1`, storage `/storage/v1`). There is no supabase-js. The session lives in localStorage `ma-cave-session` and is refreshed by `jeton()`. `SB_CLE` is the public publishable key.
-- Tables and RPCs used by the client: `bouteilles`, `profils`, `admins`, `commandes`, `commande_vins`, `commande_participants`, `remboursements`, plus the RPCs `admin_comptes`, `admin_definir_membre` and `rejoindre_commande`.
-- Bottle identity for grouping and deduplication is `cleVin()` (normalised domaine|cuvée|appellation|millésime|format). Producer names are normalised through `nettoyerDomaine()`, `cleDomaine()` and `domaineCanonique()` so that new entries reuse the spelling already in the cellar.
-- Main features: per-bottle search/photo identification, batch photo add, wine detail page, "garde affinée", meal pairing ("Que boire avec mon repas ?"), an opened-bottles history ("Bus"), group orders (`commandes`: share link via `#commande=…`, case sizes, recap/Excel export, importing a caviste's offer), an admin screen, and JSON backup/restore.
+### Circulation des données côté navigateur (`index.html`)
+- Le tableau global `bottles` fait foi. `enregistrer()` l'écrit dans IndexedDB (base `ma-cave`, magasin `kv`, clé `bottles`), puis appelle `planifierSync()`.
+- L'app fonctionne d'abord en local, y compris hors ligne. Quand l'utilisateur est connecté, `synchroniser()` enchaîne quatre étapes, dans cet ordre :
+  1. envoi des nouvelles photos dans le stockage `photos/<uid>/<id>.jpg` ;
+  2. envoi des bouteilles modifiées dans la table `bouteilles` (`{id, data, photo_path}`, où `data` est la bouteille sans sa photo) ;
+  3. suppression des bouteilles retirées sur l'appareil ;
+  4. si `telecharger` est demandé, récupération des bouteilles du compte (`recupererCompte`).
 
-### Edge function (`chercher-vin`)
-- Single POST endpoint. Access is allowed when either the `x-code-acces` header matches `CODE_ACCES`, or the bearer JWT belongs to a user listed in `membres` (checked by querying `membres` with the user's own token, so RLS decides).
-- The `mode` field selects a prompt and handler:
-  - `rechercher` (default): text query or label photo, with web search capped by `RECHERCHES_MAX`.
-  - `detecter`: several bottles in one photo, no web search.
-  - `propale`: extract wines and prices from an offer given as image, PDF or table text.
-  - `accord`: pick a wine from the user's cellar for a meal.
-  - `garde`: refine the drinking window.
-- Every handler asks Claude for JSON only and parses the reply with `extraireJSON()`. If you change a JSON shape in a prompt, update the matching client code in `index.html`, and vice versa.
-- Each call is logged to the `recherches` table for the admin screen (best effort).
-- The model is set by the `MODELE` constant.
+  Les changements sont repérés grâce à une empreinte JSON par bouteille, conservée dans le localStorage sous `ma-cave-sync-<uid>`.
+- Supabase est appelé directement avec `fetch`, via `sbFetch()` : REST `/rest/v1`, authentification `/auth/v1`, stockage `/storage/v1`. La bibliothèque supabase-js n'est pas utilisée. La session est conservée dans le localStorage sous `ma-cave-session` et renouvelée par `jeton()`. `SB_CLE` est la clé publique Supabase, sans danger dans la page.
+- Tables et RPC utilisées par l'app : `bouteilles`, `profils`, `admins`, `commandes`, `commande_vins`, `commande_participants`, `remboursements`, ainsi que les RPC `admin_comptes`, `admin_definir_membre` et `rejoindre_commande`.
+- Pour regrouper les bouteilles et éviter les doublons, un vin est identifié par `cleVin()` (domaine | cuvée | appellation | millésime | format, normalisés). Les noms de domaine passent par `nettoyerDomaine()`, `cleDomaine()` et `domaineCanonique()`, pour qu'un nouvel ajout reprenne l'écriture déjà présente dans la cave.
+- Fonctionnalités principales :
+  - recherche d'un vin et identification par photo de l'étiquette ;
+  - ajout en lot par photo ;
+  - page de consultation d'un vin ;
+  - garde affinée ;
+  - accord mets-vins (« Que boire avec mon repas ? ») ;
+  - historique des bouteilles ouvertes (onglet « Bus ») ;
+  - commandes groupées (`commandes`) : lien de partage `#commande=…`, tailles de caisse, récapitulatif et export Excel, import d'une proposition de caviste ;
+  - écran d'administration ;
+  - sauvegarde et restauration au format JSON.
+
+### Fonction serveur (`chercher-vin`)
+- Un seul point d'entrée, en POST. L'accès est autorisé dans deux cas : l'en-tête `x-code-acces` correspond à `CODE_ACCES`, ou le jeton de connexion appartient à un utilisateur inscrit dans la table `membres`. Cette vérification interroge `membres` avec le jeton de l'utilisateur lui-même : ce sont donc les règles RLS qui tranchent.
+- Le champ `mode` choisit la consigne et le traitement :
+  - `rechercher` (par défaut) : texte ou photo d'étiquette, avec un nombre de recherches web limité par `RECHERCHES_MAX` ;
+  - `detecter` : plusieurs bouteilles sur une même photo, sans recherche web ;
+  - `propale` : extraction des vins et des prix d'une offre (image, PDF ou texte de tableau) ;
+  - `accord` : choix d'un vin de la cave pour un repas ;
+  - `garde` : affinage de la fenêtre de dégustation.
+- Chaque traitement demande à Claude une réponse uniquement en JSON, lue par `extraireJSON()`. Si la forme du JSON change dans une consigne, il faut mettre à jour le code correspondant dans `index.html`, et inversement.
+- Chaque appel est noté dans la table `recherches`, consultée par l'écran d'administration. Un échec de cette écriture ne bloque rien.
+- Le modèle utilisé est défini par la constante `MODELE`.
