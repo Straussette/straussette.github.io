@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.7">
+<meta name="app-version" content="2026-10-10.8">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -482,6 +482,17 @@
         <select id="f-couleur"></select>
       </label>
     </div>
+    <label class="f">Format
+      <select id="f-format">
+        <option value="">Bouteille (75 cl)</option>
+        <option>Demi-bouteille</option>
+        <option>Clavelin</option>
+        <option>Magnum</option>
+        <option>Double magnum</option>
+        <option>Jéroboam</option>
+        <option>Mathusalem</option>
+      </select>
+    </label>
     <label class="f">Classement
       <select id="f-classement">
         <option value="">—</option>
@@ -606,7 +617,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
 const sansAccent = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const slug = (s) => sansAccent(s).toLowerCase();
 const norm = (s) => sansAccent(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const cleVin = (b) => [norm(b.domaine), norm(b.cuvee), norm(b.appellation), b.millesime || 'nm'].join('|');
+const cleVin = (b) => [norm(b.domaine), norm(b.cuvee), norm(b.appellation), b.millesime || 'nm', norm(b.format || '')].join('|');
 // Identifiant unique au format UUID (aussi sur les navigateurs anciens)
 const nouvelId = () => (crypto.randomUUID ? crypto.randomUUID()
   : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
@@ -632,10 +643,22 @@ function compresser(file, maxPx = 1200, qualite = 0.8) {
 
 const fmtEuro = (n) => Math.round(n).toLocaleString('fr-FR') + ' €';
 // Valeur estimée : milieu de la fourchette trouvée, sinon prix d'achat
+// Contenance relative à une bouteille de 75 cl
+function facteurFormat(f) {
+  const t = sansAccent(f || '').toLowerCase();
+  if (/double magnum|jeroboam/.test(t)) return 4;
+  if (/mathusalem|imperial/.test(t)) return 8;
+  if (/magnum|1[,.]5/.test(t)) return 2;
+  if (/demi|37/.test(t)) return 0.5;
+  if (/clavelin|62/.test(t)) return 0.83;
+  return 1;
+}
+// Valeur estimée d'une unité : prix du marché (donné pour 75 cl) ajusté au format, sinon prix d'achat
 function valeurUnitaire(b) {
   const min = Number(b.prixMin) || 0, max = Number(b.prixMax) || 0;
-  if (min && max) return (min + max) / 2;
-  return min || max || Number(b.prix) || 0;
+  const marche = min && max ? (min + max) / 2 : (min || max);
+  if (marche) return marche * facteurFormat(b.format);
+  return Number(b.prix) || 0;
 }
 
 // Statut de la fenêtre de dégustation
@@ -678,11 +701,11 @@ function carte(b) {
       <button class="card-main" data-act="edit">
         ${b.photo ? `<img src="${b.photo}" alt="">` : `<div class="ph c-${c}">🍷</div>`}
         <div class="info">
-          <div class="name">${esc(b.domaine || b.appellation || 'Sans nom')}${b.cuvee ? ` <span class="cuvee">· ${esc(b.cuvee)}</span>` : ''}${niveauCru(b) === 'gc' ? '<span class="cru">GC</span>' : niveauCru(b) === 'pc' ? '<span class="cru">1er cru</span>' : ''}</div>
+          <div class="name">${esc(b.domaine || b.appellation || 'Sans nom')}${b.cuvee ? ` <span class="cuvee">· ${esc(b.cuvee)}</span>` : ''}${niveauCru(b) === 'gc' ? '<span class="cru">GC</span>' : niveauCru(b) === 'pc' ? '<span class="cru">1er cru</span>' : ''}${b.format ? `<span class="cru" style="color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, transparent)">${esc(b.format)}</span>` : ''}</div>
           <div class="sub"><span class="dot c-${c}"></span>${esc(sousTitre)}</div>
           ${st ? `<div class="badge ${st.cls}">${st.txt}</div>` : ''}
           ${b.emplacement ? `<div class="loc">📍 ${esc(b.emplacement)}</div>` : ''}
-          ${valeurUnitaire(b) ? `<div class="valeur">≈ ${fmtEuro(valeurUnitaire(b))} / bouteille</div>` : ''}
+          ${valeurUnitaire(b) ? `<div class="valeur">≈ ${fmtEuro(valeurUnitaire(b))} / ${b.format ? esc(b.format.toLowerCase()) : 'bouteille'}</div>` : ''}
         </div>
       </button>
       <div class="qty">
@@ -788,7 +811,7 @@ function cleGroupe(b, groupe) {
 }
 
 /* ---------- Formulaire ---------- */
-const CHAMPS = ['domaine', 'cuvee', 'appellation', 'classement', 'region', 'millesime', 'couleur', 'quantite', 'boireDe', 'boireA', 'prix', 'emplacement', 'notes'];
+const CHAMPS = ['domaine', 'cuvee', 'appellation', 'format', 'classement', 'region', 'millesime', 'couleur', 'quantite', 'boireDe', 'boireA', 'prix', 'emplacement', 'notes'];
 $('#f-couleur').innerHTML = COULEURS.map((c) => `<option>${c}</option>`).join('');
 
 function ouvrirFormulaire(b = null) {
@@ -826,6 +849,7 @@ function lireFormulaire() {
     cuvee: v('cuvee'),
     appellation: v('appellation'),
     classement: v('classement'),
+    format: v('format'),
     region: v('region'),
     millesime: annee('millesime'),
     couleur: v('couleur'),
@@ -1246,7 +1270,7 @@ function afficherVue(message = '', erreur = false, enCours = false) {
         <span class="petit" style="font-size:.85rem">bouteille${b.quantite > 1 ? 's' : ''}</span>
       </div>
       <div class="petit" style="text-align:right">
-        ${v ? `≈ ${fmtEuro(v)} / bout.` : ''}${b.prix ? `<br>payé ${fmtEuro(b.prix)}` : ''}
+        ${v ? `≈ ${fmtEuro(v)} / ${b.format ? esc(b.format.toLowerCase()) : 'bout.'}` : ''}${b.prix ? `<br>payé ${fmtEuro(b.prix)}` : ''}
       </div>
     </div>
     ${b.quantite === 0 ? `<div class="petit">📖 Plus en cave — ce vin reste en mémoire.${(b.ouvertures || []).length ? ` Dernière bouteille ouverte le ${new Date(b.ouvertures.at(-1)).toLocaleDateString('fr-FR')}.` : ''}</div>`
@@ -2899,6 +2923,7 @@ async function integrerCommandesALaCave() {
         const b = {
           domaine: d.domaine || '', cuvee: d.cuvee || '', appellation: d.appellation || '', region: d.region || '',
           classement: d.classement || '',
+          format: d.format ? (/magnum/i.test(d.format) && !/double/i.test(d.format) ? 'Magnum' : d.format) : '',
           millesime: d.millesime || '', couleur: COULEURS.includes(d.couleur) ? d.couleur : 'Rouge',
           quantite: part.quantite, boireDe: d.boireDe || '', boireA: d.boireA || '',
           prix: Number(v.prix) || '', emplacement: '', notes: `${d.format ? 'Format ' + d.format + ' · ' : ''}Commande « ${c.titre} »${c.fournisseur ? ' chez ' + c.fournisseur : ''}${c.date_commande ? ' (' + fmtDate(c.date_commande) + ')' : ''}`,
