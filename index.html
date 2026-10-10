@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.13">
+<meta name="app-version" content="2026-10-10.14">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -454,6 +454,7 @@
     <div><button type="button" class="btn primary" id="ac-go">Trouver dans ma cave</button></div>
     <p class="search-status" id="ac-statut" hidden></p>
     <div id="ac-resultat" style="display:grid; gap:10px"></div>
+    <div id="ac-historique"></div>
   </div>
 </dialog>
 
@@ -1216,8 +1217,66 @@ let occasionAccord = 'quotidien';
 $('#btnAccord').onclick = () => {
   statutGenerique($('#ac-statut'), '');
   $('#dlgAccord').showModal();
+  afficherHistoriqueAccords();
+  chargerAccords();
   setTimeout(() => $('#ac-repas').focus(), 50);
 };
+
+/* Mémoire des recherches d'accords (sur le compte) */
+let accordsMemo = [];
+const NB_ACCORDS_AFFICHES = 15;
+const cleRepas = (t) => norm(t);
+
+async function chargerAccords() {
+  if (!session) return;
+  try {
+    accordsMemo = await sbFetch('/rest/v1/accords?select=id,repas,occasion,resultat,cree&order=cree.desc&limit=60') || [];
+    afficherHistoriqueAccords();
+  } catch (e) { /* hors ligne : on garde ce qu'on a */ }
+}
+
+function afficherHistoriqueAccords() {
+  const el = $('#ac-historique');
+  if (!accordsMemo.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<h3 style="margin:16px 0 6px">🕘 Mes recherches</h3>
+    <div style="display:grid; gap:6px">${accordsMemo.slice(0, NB_ACCORDS_AFFICHES).map((a) => `
+      <div class="ligne" data-memo="${esc(a.id)}" style="display:flex; align-items:center; gap:8px">
+        <button type="button" class="link" data-memo-act="voir" style="text-align:left; flex:1">${esc(a.repas)}
+          <span class="petit">· ${fmtDate(a.cree)}${a.occasion === 'belle' ? ' · ✨' : ''}</span></button>
+        <button type="button" class="link" data-memo-act="suppr" aria-label="Supprimer cette recherche">✕</button>
+      </div>`).join('')}</div>`;
+}
+
+function montrerAccordMemo(a, message) {
+  $('#ac-repas').value = a.repas;
+  occasionAccord = a.occasion || 'quotidien';
+  for (const x of document.querySelectorAll('#ac-occasion .chip')) x.setAttribute('aria-pressed', String(x.dataset.occ === occasionAccord));
+  statutGenerique($('#ac-statut'), message || `Recherche du ${fmtDate(a.cree)} retrouvée — aucune nouvelle recherche lancée.`);
+  afficherAccord(a.resultat, a);
+  $('#accordContenu').scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+}
+
+$('#ac-historique').addEventListener('click', async (e) => {
+  const act = e.target.closest('[data-memo-act]')?.dataset.memoAct;
+  const id = e.target.closest('[data-memo]')?.dataset.memo;
+  const a = accordsMemo.find((x) => x.id === id);
+  if (!act || !a) return;
+  if (act === 'voir') return montrerAccordMemo(a);
+  if (act === 'suppr') {
+    accordsMemo = accordsMemo.filter((x) => x.id !== id);
+    afficherHistoriqueAccords();
+    try { await sbFetch(`/rest/v1/accords?id=eq.${id}`, { method: 'DELETE' }); } catch (err) { /* sans gravité */ }
+  }
+});
+
+async function memoriserAccord(repas, occasion, resultat) {
+  const a = { id: nouvelId(), repas, occasion, resultat, cree: new Date().toISOString() };
+  accordsMemo = [a, ...accordsMemo];
+  afficherHistoriqueAccords();
+  if (!session) return a;
+  try { await jsonPost('/rest/v1/accords', { id: a.id, repas, occasion, resultat }); } catch (e) { /* hors ligne : reste en mémoire pour la session */ }
+  return a;
+}
 $('#ac-occasion').addEventListener('click', (e) => {
   const b = e.target.closest('[data-occ]');
   if (!b) return;
@@ -1246,9 +1305,13 @@ function caveCompacte() {
   });
 }
 
-$('#ac-go').onclick = async () => {
+async function lancerAccord(forcer = false) {
   const repas = $('#ac-repas').value.trim();
   if (repas.length < 2) return statutGenerique($('#ac-statut'), 'Dites ce que vous allez manger.', true);
+  if (!forcer) {
+    const deja = accordsMemo.find((a) => cleRepas(a.repas) === cleRepas(repas) && (a.occasion || 'quotidien') === occasionAccord);
+    if (deja) return montrerAccordMemo(deja, `Vous avez déjà cherché ce plat le ${fmtDate(deja.cree)} : voici le résultat, sans nouvelle recherche.`);
+  }
   const cave = caveCompacte();
   if (!cave.length) return statutGenerique($('#ac-statut'), 'Votre cave est vide.', true);
   const code = codeAcces();
@@ -1260,16 +1323,21 @@ $('#ac-go').onclick = async () => {
     const r = await appelerAPI({ mode: 'accord', repas, occasion: occasionAccord, cave }, code);
     statutGenerique($('#ac-statut'), '');
     afficherAccord(r);
+    await memoriserAccord(repas, occasionAccord, r);
   } catch (e) {
     statutGenerique($('#ac-statut'), 'Échec : ' + e.message, true);
   } finally {
     $('#ac-go').disabled = false;
   }
-};
+}
+$('#ac-go').onclick = () => lancerAccord(false);
 
-function afficherAccord(r) {
+function afficherAccord(r, memo) {
+  r = r || {};
   const choix = (r.choix || []).map((c) => ({ ...c, b: bottles.find((x) => x.id === c.id) })).filter((c) => c.b);
   $('#ac-resultat').innerHTML = `
+    ${memo ? `<div class="actions" style="margin:0"><span class="petit">🕘 ${esc(memo.repas)} · ${fmtDate(memo.cree)}</span><span class="spacer"></span>
+      <button type="button" class="btn secondary petit-btn" data-ac-relancer>🔄 Relancer la recherche</button></div>` : ''}
     ${r.ideal ? `<p class="petit"><strong>Idéalement :</strong> ${esc(r.ideal)}</p>` : ''}
     ${choix.map((c, i) => {
       const st = statut(c.b);
@@ -1277,7 +1345,7 @@ function afficherAccord(r) {
       <div class="cmd-pers" data-accord="${esc(c.b.id)}">
         <div class="ligne">
           <strong>${i === 0 ? '🥇 ' : i === 1 ? '🥈 ' : i === 2 ? '🥉 ' : ''}${esc(nomVin(c.b))}</strong>
-          <span class="petit">${c.b.quantite} en cave</span>
+          <span class="petit">${c.b.quantite > 0 ? `${c.b.quantite} en cave` : 'plus en cave'}</span>
         </div>
         ${st ? `<div><span class="badge ${st.cls}">${st.txt}</span></div>` : ''}
         ${c.accord ? `<p style="margin:0">${esc(c.accord)}</p>` : ''}
@@ -1286,7 +1354,7 @@ function afficherAccord(r) {
         <div class="actions" style="margin:0">
           <button type="button" class="link" data-ac="voir">Voir la fiche</button>
           <span class="spacer"></span>
-          <button type="button" class="btn primary petit-btn" data-ac="ouvrir">J'ouvre celle-ci</button>
+          ${c.b.quantite > 0 ? `<button type="button" class="btn primary petit-btn" data-ac="ouvrir">J'ouvre celle-ci</button>` : ''}
         </div>
       </div>`;
     }).join('')}
@@ -1295,6 +1363,7 @@ function afficherAccord(r) {
 }
 
 $('#ac-resultat').addEventListener('click', async (e) => {
+  if (e.target.closest('[data-ac-relancer]')) return lancerAccord(true);
   const act = e.target.closest('[data-ac]')?.dataset.ac;
   const id = e.target.closest('[data-accord]')?.dataset.accord;
   const b = bottles.find((x) => x.id === id);
@@ -1305,7 +1374,9 @@ $('#ac-resultat').addEventListener('click', async (e) => {
     boireUne(b);
     await enregistrer();
     afficher();
-    e.target.closest('[data-accord]').querySelector('.ligne .petit').textContent = `${b.quantite} en cave`;
+    const carteAc = e.target.closest('[data-accord]');
+    carteAc.querySelector('.ligne .petit').textContent = b.quantite > 0 ? `${b.quantite} en cave` : 'plus en cave';
+    if (b.quantite <= 0) e.target.remove();
     statutGenerique($('#ac-statut'), `🍷 Bonne dégustation ! Pensez à noter vos impressions dans la fiche du vin.`);
   }
 });
