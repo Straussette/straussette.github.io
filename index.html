@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.2">
+<meta name="app-version" content="2026-10-10.3">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -34,6 +34,9 @@
     font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size:16px;
     -webkit-font-smoothing:antialiased; padding-bottom:110px;
   }
+  /* Défilement : pas d'effet élastique qui « accroche » la page sur iPhone */
+  html, body { overscroll-behavior-y:none; }
+  body.fenetre-ouverte { overflow:hidden; }
   .wrap { max-width:720px; margin:0 auto; }
 
   /* ---------- En-tête ---------- */
@@ -191,6 +194,7 @@
   dialog {
     border:0; padding:0; border-radius:16px; width:min(560px, calc(100% - 24px));
     max-height:calc(100dvh - 24px); background:var(--surface); color:var(--text);
+    overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
   }
   dialog::backdrop { background:rgba(20,10,12,.55); }
   form { padding:18px; display:grid; gap:12px; }
@@ -2898,6 +2902,20 @@ if (location.protocol.startsWith('http')) {
   verifierMiseAJour();
   document.addEventListener('visibilitychange', () => { if (!document.hidden) verifierMiseAJour(); });
 }
+
+/* ---------- Défilement et fenêtres ---------- */
+// La page derrière une fenêtre est figée, et toujours libérée quand plus aucune fenêtre n'est ouverte.
+function majVerrouDefilement() {
+  document.body.classList.toggle('fenetre-ouverte', !!document.querySelector('dialog[open]'));
+}
+for (const d of document.querySelectorAll('dialog')) {
+  d.addEventListener('close', () => setTimeout(majVerrouDefilement, 0));
+  new MutationObserver(majVerrouDefilement).observe(d, { attributes: true, attributeFilter: ['open'] });
+}
+// Filet de sécurité : au retour dans l'app ou après une alerte système, on revérifie
+document.addEventListener('visibilitychange', majVerrouDefilement);
+window.addEventListener('focus', majVerrouDefilement);
+document.addEventListener('touchstart', () => { if (!document.querySelector('dialog[open]')) document.body.classList.remove('fenetre-ouverte'); }, { passive: true });
 
 /* ---------- Démarrage ---------- */
 (async () => {
