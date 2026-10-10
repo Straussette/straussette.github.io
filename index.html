@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.8">
+<meta name="app-version" content="2026-10-10.9">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -618,6 +618,30 @@ const sansAccent = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u03
 const slug = (s) => sansAccent(s).toLowerCase();
 const norm = (s) => sansAccent(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const cleVin = (b) => [norm(b.domaine), norm(b.cuvee), norm(b.appellation), b.millesime || 'nm', norm(b.format || '')].join('|');
+/* ---------- Noms de domaine homogènes ---------- */
+// Nettoie un nom renvoyé par la recherche : « Domaine Michel Noëllat (Michel Noëllat et Fils), Vosne-Romanée » → « Domaine Michel Noëllat »
+function nettoyerDomaine(nom) {
+  let t = String(nom || '').trim();
+  t = t.replace(/\s*[(«\[][^)»\]]*[)»\]]/g, '');            // précisions entre parenthèses / guillemets
+  t = t.replace(/,.*$/, '');                                       // « , Vosne-Romanée », « , anciennement … »
+  t = t.replace(/\b(EARL|SCEA|GAEC|SARL|SAS|SA|GFA|SCV)\b\.?/gi, '');
+  return t.replace(/\s{2,}/g, ' ').replace(/^[\s\-–,]+|[\s\-–,]+$/g, '').trim();
+}
+// Clé de comparaison : sans « Domaine », « Château », « Père & Fils »…
+const cleDomaine = (nom) => norm(nettoyerDomaine(nom))
+  .replace(/\b(domaine|domaines|chateau|clos|maison|cave|caves|vignobles?|earl|scea|gaec)\b/g, ' ')
+  .replace(/\b(pere|peres|fils|freres|et|and|de|du|des|la|le|les|l|d)\b/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+// Si le domaine existe déjà dans la cave (même clé), on reprend son écriture
+function domaineCanonique(nom) {
+  const propre = nettoyerDomaine(nom);
+  const cle = cleDomaine(propre);
+  if (!cle) return propre;
+  const existant = bottles.map((b) => b.domaine).find((d) => d && cleDomaine(d) === cle);
+  return existant || propre;
+}
+const nettoyerAppellation = (a) => String(a || '').replace(/\s*\([^)]*\)/g, '').replace(/\s+AOC\b|\s+AOP\b/gi, '').replace(/\s{2,}/g, ' ').trim();
+
 // Identifiant unique au format UUID (aussi sur les navigateurs anciens)
 const nouvelId = () => (crypto.randomUUID ? crypto.randomUUID()
   : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
@@ -958,9 +982,9 @@ async function rechercherVin() {
 
     // Remplit le formulaire avec ce qui a été trouvé
     const remplir = (k, v) => { if (v !== null && v !== undefined && v !== '') $('#f-' + k).value = v; };
-    remplir('domaine', f.domaine);
+    remplir('domaine', domaineCanonique(f.domaine));
     remplir('cuvee', f.cuvee);
-    remplir('appellation', f.appellation);
+    remplir('appellation', nettoyerAppellation(f.appellation));
     remplir('region', f.region);
     remplir('millesime', f.millesime);
     if (COULEURS.includes(f.couleur)) $('#f-couleur').value = f.couleur;
@@ -1085,6 +1109,7 @@ $('#btnCancel').onclick = () => $('#dlg').close();
 $('#form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = { ...lireFormulaire(), ...(ficheEnCours || {}), garde: gardeEnCours, degustations: degustEnCours };
+  data.domaine = domaineCanonique(data.domaine);
   if (!data.garde) delete data.garde;
   if (!data.degustations.length) delete data.degustations;
   if (!data.domaine && !data.appellation) {
@@ -1488,7 +1513,7 @@ $('#lotPhotos').addEventListener('change', async (e) => {
       illisibles += res.nonIdentifiees || 0;
       for (const v of res.vins || []) {
         const vin = {
-          domaine: v.domaine || '', cuvee: v.cuvee || '', appellation: v.appellation || '', classement: v.classement || '',
+          domaine: domaineCanonique(v.domaine), cuvee: v.cuvee || '', appellation: nettoyerAppellation(v.appellation), classement: v.classement || '',
           millesime: Number(v.millesime) || null, couleur: v.couleur || '',
           nombre: Number(v.nombre) || 1, certitude: v.certitude || '', position: v.position || '',
           miniature, coche: true, etat: '',
@@ -1539,7 +1564,7 @@ $('#lotGo').onclick = async () => {
     } catch { /* on ajoute quand même le vin avec ce qui a été lu */ }
 
     const b = {
-      domaine: fiche?.domaine || v.domaine,
+      domaine: domaineCanonique(fiche?.domaine || v.domaine),
       cuvee: fiche?.cuvee ?? v.cuvee,
       appellation: fiche?.appellation || v.appellation,
       classement: fiche?.classement || v.classement || '',
@@ -2831,7 +2856,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
       commande_id: c.id,
       prix: Math.max(0, Number(v.prix) || 0),
       data: {
-        domaine: (v.domaine || '').trim(), cuvee: (v.cuvee || '').trim(), appellation: (v.appellation || '').trim(),
+        domaine: domaineCanonique(v.domaine), cuvee: (v.cuvee || '').trim(), appellation: nettoyerAppellation(v.appellation),
         ...(v.classement ? { classement: v.classement } : {}),
         millesime: parseInt(v.millesime, 10) || '', couleur: COULEURS.includes(v.couleur) ? v.couleur : 'Rouge',
         ...(v.format && !/^75/.test(v.format) ? { format: v.format } : {}),
@@ -2921,7 +2946,7 @@ async function integrerCommandesALaCave() {
         if (!v) continue;
         const d = v.data || {};
         const b = {
-          domaine: d.domaine || '', cuvee: d.cuvee || '', appellation: d.appellation || '', region: d.region || '',
+          domaine: domaineCanonique(d.domaine), cuvee: d.cuvee || '', appellation: nettoyerAppellation(d.appellation), region: d.region || '',
           classement: d.classement || '',
           format: d.format ? (/magnum/i.test(d.format) && !/double/i.test(d.format) ? 'Magnum' : d.format) : '',
           millesime: d.millesime || '', couleur: COULEURS.includes(d.couleur) ? d.couleur : 'Rouge',
