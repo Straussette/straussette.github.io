@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.11">
+<meta name="app-version" content="2026-10-10.12">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -127,6 +127,13 @@
     box-shadow:0 6px 20px rgba(123,30,58,.35);
   }
   .fab.alt { background:var(--surface); color:var(--accent); border:1px solid var(--border); }
+
+  /* ---------- Accueil (non connecté) ---------- */
+  .accueil { padding:40px 20px; text-align:center; display:grid; gap:14px; justify-items:center; }
+  .accueil h2 { margin:0; font-family:Georgia, "Times New Roman", serif; font-size:1.6rem; }
+  .accueil p { margin:0; max-width:420px; line-height:1.5; }
+  .accueil-ill { font-size:3.5rem; }
+  .accueil-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:6px 0; }
 
   /* ---------- Onglets ---------- */
   .onglets { display:flex; gap:6px; padding:10px 16px 0; max-width:720px; margin:0 auto; overflow-x:auto; scrollbar-width:none; }
@@ -285,6 +292,17 @@
   <button data-vue="commandes" aria-selected="false">📦 Commandes</button>
   <button data-vue="admin" aria-selected="false" hidden id="ongletAdmin">⚙️ Admin</button>
 </nav>
+
+<section class="wrap accueil" id="accueil" hidden>
+  <div class="accueil-ill" aria-hidden="true">🍷</div>
+  <h2>Bienvenue dans Ma Cave</h2>
+  <p>Photographiez vos bouteilles, retrouvez quand les boire et avec quoi, suivez la valeur de votre cave et organisez des commandes groupées entre amis.</p>
+  <div class="accueil-actions">
+    <button class="btn primary" id="accueilConnexion">Se connecter</button>
+    <button class="btn secondary" id="accueilInscription">Créer un compte</button>
+  </div>
+  <p class="petit">Un compte gratuit est nécessaire : votre cave est enregistrée en ligne et vous la retrouvez sur tous vos appareils.</p>
+</section>
 
 <main class="wrap" id="vueCave">
   <div class="toolbar">
@@ -1463,7 +1481,7 @@ try {
   if (vue.sort) $('#sort').value = vue.sort;
   if (vue.cru) $('#cru').value = vue.cru;
 } catch {}
-$('#btnAdd').onclick = () => ouvrirFormulaire();
+$('#btnAdd').onclick = () => { if (session) ouvrirFormulaire(); };
 
 /* ---------- Ajout en lot (plusieurs bouteilles par photo) ---------- */
 let lot = [];          // vins détectés, en attente de validation
@@ -1650,6 +1668,7 @@ $('#lotGo').onclick = async () => {
 };
 
 $('#btnLot').onclick = () => {
+  if (!session) return;
   if (!lotOccupe) {
     lot = [];
     lotStatut('');
@@ -1943,7 +1962,24 @@ function compteStatut(txt, erreur = false, enCours = false) {
 // Modes de la fenêtre : connexion, inscription, oubli (demande de lien), nouveau (choix du nouveau mot de passe), compte (connecté)
 let modeCompte = 'connexion';
 
+// Sans compte : seul l'écran d'accueil est visible (pas de cave, pas d'ajout de bouteilles)
+function majAcces() {
+  const co = !!session;
+  $('#accueil').hidden = co;
+  $('#stats').hidden = !co;
+  if (!co) {
+    $('#vueCave').hidden = true;
+    $('#fabs').hidden = true;
+    $('#vueCommandes').hidden = true;
+    $('#vueAdmin').hidden = true;
+  } else if (vueActive === 'cave') {
+    $('#vueCave').hidden = false;
+    $('#fabs').hidden = false;
+  }
+}
+
 function afficherCompte(message) {
+  majAcces();
   const co = !!session;
   $('#btnCompte').textContent = co ? `${etatSync || '👤'} ${session.user.pseudo || session.user.email.split('@')[0]}` : '👤 Se connecter';
   if (co && modeCompte !== 'nouveau') modeCompte = 'compte';
@@ -2122,6 +2158,9 @@ async function traiterLienEmail() {
   }
 }
 
+$('#accueilConnexion').onclick = () => { modeCompte = 'connexion'; compteStatut(''); afficherCompte(); $('#dlgCompte').showModal(); };
+$('#accueilInscription').onclick = () => { modeCompte = 'inscription'; compteStatut(''); afficherCompte(); $('#dlgCompte').showModal(); };
+
 $('#btnCompte').onclick = () => {
   compteStatut('');
   if (!session) modeCompte = 'connexion';
@@ -2173,8 +2212,8 @@ let estAdmin = false;
 function changerVue(v) {
   vueActive = v;
   for (const b of document.querySelectorAll('#onglets button')) b.setAttribute('aria-selected', String(b.dataset.vue === v));
-  $('#vueCave').hidden = v !== 'cave';
-  $('#fabs').hidden = v !== 'cave';
+  $('#vueCave').hidden = v !== 'cave' || !session;
+  $('#fabs').hidden = v !== 'cave' || !session;
   $('#vueCommandes').hidden = v !== 'commandes';
   $('#vueAdmin').hidden = v !== 'admin';
   if (v === 'commandes') chargerCommandes();
