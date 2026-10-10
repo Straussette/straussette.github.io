@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.1">
+<meta name="app-version" content="2026-10-10.2">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -233,6 +233,12 @@
   .fiche a { color:var(--accent); word-break:break-all; font-size:.8rem; }
   .valeur { font-size:.8rem; color:var(--muted); margin-top:4px; }
   .garde-zone { display:grid; gap:8px; }
+  .vue-tete { display:flex; gap:12px; align-items:flex-start; }
+  .vue-tete .info { flex:1; min-width:0; }
+  .vue-tete h2 { margin:0; font-size:1.4rem; line-height:1.2; }
+  .vue-tete img { width:54px; height:70px; object-fit:cover; border-radius:8px; flex:none; }
+  .vue-stock { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:12px; }
+  .vue-stock .lot-qty span { font-size:1.2rem; }
   .frise { display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; text-align:center; }
   .frise div { padding:6px 2px; border-radius:8px; background:color-mix(in srgb, var(--b) 14%, transparent); color:var(--b); font-size:.78rem; font-weight:600; line-height:1.25; }
   .frise div span { display:block; font-size:.95rem; }
@@ -396,6 +402,10 @@
   </div>
 </dialog>
 
+<dialog id="dlgVue">
+  <div class="cmd vue-vin" id="vueContenu"></div>
+</dialog>
+
 <dialog id="dlg">
   <form id="form" novalidate>
     <h2 id="dlgTitle">Nouvelle bouteille</h2>
@@ -467,7 +477,7 @@
         <input id="f-boireA" type="number" inputmode="numeric" min="1900" max="2150" placeholder="année">
       </label>
     </div>
-    <div class="garde-zone">
+    <div class="garde-zone" hidden>
       <div class="actions" style="margin:0; flex-wrap:wrap">
         <button type="button" class="btn secondary petit-btn" id="btnGarde">🎯 Affiner la garde</button>
         <button type="button" class="btn secondary petit-btn" id="btnDegustation">📝 Noter une dégustation</button>
@@ -802,21 +812,25 @@ function statutRecherche(txt, erreur = false, enCours = false) {
 function afficherFiche(f) {
   const el = $('#fiche');
   if (!f || !f.description) { el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = htmlFiche(f);
+  el.hidden = false;
+}
+
+function htmlFiche(f, { avecQuand = true } = {}) {
   const prix = f.prixMin && f.prixMax ? `${fmtEuro(f.prixMin)} – ${fmtEuro(f.prixMax)}` : (f.prixMin || f.prixMax ? fmtEuro(f.prixMin || f.prixMax) : '');
   const accords = Array.isArray(f.accords) ? f.accords : (f.accords ? [f.accords] : []);
   const sources = (Array.isArray(f.sources) ? f.sources : []).filter((u) => /^https?:\/\//.test(u)).slice(0, 4);
-  el.innerHTML = `
+  return `
     <div class="meta">
       ${f.cepages ? `<span class="pill">🍇 ${esc(f.cepages)}</span>` : ''}
       ${prix ? `<span class="pill">💶 ${prix}</span>` : ''}
       ${f.confiance ? `<span class="pill">Fiabilité : ${esc(f.confiance)}</span>` : ''}
     </div>
     <div><h3>Le vin</h3><p>${esc(f.description)}</p></div>
-    ${f.apogee ? `<div><h3>Quand le boire</h3><p>${esc(f.apogee)}</p></div>` : ''}
+    ${avecQuand && f.apogee ? `<div><h3>Quand le boire</h3><p>${esc(f.apogee)}</p></div>` : ''}
     ${accords.length ? `<div><h3>Avec quoi</h3><ul>${accords.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
     ${f.service ? `<div><h3>Service</h3><p>${esc(f.service)}</p></div>` : ''}
     ${sources.length ? `<div><h3>Sources</h3>${sources.map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></div>`).join('')}</div>` : ''}`;
-  el.hidden = false;
 }
 
 // Le code d'accès est demandé une fois puis mémorisé sur cet appareil
@@ -909,11 +923,7 @@ let degustEnCours = [];    // journal de dégustation de la bouteille ouverte
 
 const ETATS_DEGUST = { ferme: 'Encore fermé / trop jeune', point: 'À point', fatigue: 'Fatigué / sur le déclin' };
 
-function afficherGarde() {
-  const g = gardeEnCours;
-  const el = $('#gardeBloc');
-  if (!g) { el.hidden = true; el.innerHTML = ''; }
-  else {
+function htmlGarde(g) {
     const an = new Date().getFullYear();
     const phases = [
       ['Ouverture', `dès ${g.ouverture}`, '--tot', an >= g.ouverture && an < g.apogeeDe],
@@ -922,7 +932,7 @@ function afficherGarde() {
       ['Déclin', `après ${g.avant}`, '--passe', an > g.avant],
     ];
     const sources = (g.sources || []).filter((x) => x && x.nom);
-    el.innerHTML = `
+    return `
       <div class="frise">${phases.map(([t, d, c, act]) => `<div style="--b:var(${c})" class="${act ? 'actuelle' : ''}">${t}<span>${esc(d)}</span></div>`).join('')}</div>
       ${g.explication ? `<p>${esc(g.explication)}</p>` : ''}
       ${g.millesime ? `<div><h3>Le millésime</h3><p>${esc(g.millesime)}</p></div>` : ''}
@@ -931,8 +941,13 @@ function afficherGarde() {
         ? sources.map((x) => `<div>${/^https?:\/\//.test(x.url || '') ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.nom)}</a>` : esc(x.nom)}${x.fenetre ? ` — <strong>${esc(x.fenetre)}</strong>` : ''}</div>`).join('')
         : '<p class="petit">Aucune fenêtre publiée trouvée : estimation à partir du domaine et du millésime.</p>'}</div>
       <div class="meta"><span class="pill">Fiabilité : ${esc(g.confiance || '?')}</span>${g.le ? `<span class="pill">Mise à jour le ${new Date(g.le).toLocaleDateString('fr-FR')}</span>` : ''}</div>`;
-    el.hidden = false;
-  }
+}
+
+function afficherGarde() {
+  const g = gardeEnCours;
+  const el = $('#gardeBloc');
+  if (!g) { el.hidden = true; el.innerHTML = ''; }
+  else { el.innerHTML = htmlGarde(g); el.hidden = false; }
   const d = $('#degustBloc');
   d.hidden = !degustEnCours.length;
   d.innerHTML = degustEnCours.length
@@ -1047,6 +1062,139 @@ $('#btnDelete').onclick = async () => {
   afficher();
 };
 
+/* ---------- Page de consultation d'un vin ---------- */
+let vueId = null;        // bouteille affichée en consultation
+let retourVue = null;    // après « Modifier », on revient sur la consultation
+
+function ouvrirVue(b) {
+  vueId = b.id;
+  afficherVue();
+  if (!$('#dlgVue').open) $('#dlgVue').showModal();
+}
+
+function afficherVue(message = '', erreur = false, enCours = false) {
+  const b = bottles.find((x) => x.id === vueId);
+  const el = $('#vueContenu');
+  if (!b) { $('#dlgVue').close(); return; }
+  const st = statut(b);
+  const cru = niveauCru(b);
+  const v = valeurUnitaire(b);
+  const sousTitre = [b.appellation, b.classement && !sansAccent(b.appellation || '').toLowerCase().includes(sansAccent(b.classement).toLowerCase()) ? b.classement : '', b.millesime || 'NM'].filter(Boolean).join(' · ');
+  const degust = b.degustations || [];
+  const aFiche = b.description || b.accords || b.service;
+  el.innerHTML = `
+    <div class="vue-tete">
+      <div class="info">
+        <h2>${esc(b.domaine || b.appellation || 'Sans nom')}${cru === 'gc' ? '<span class="cru">GC</span>' : cru === 'pc' ? '<span class="cru">1er cru</span>' : ''}</h2>
+        ${b.cuvee ? `<div style="font-weight:600">${esc(b.cuvee)}</div>` : ''}
+        <div class="sub"><span class="dot c-${slug(b.couleur)}"></span>${esc(sousTitre)}${b.region ? ' · ' + esc(b.region) : ''}${b.format ? ' · ' + esc(b.format) : ''}</div>
+      </div>
+      ${b.photo ? `<img src="${b.photo}" alt="Étiquette">` : ''}
+    </div>
+
+    <div class="vue-stock">
+      <div class="lot-qty">
+        <button type="button" data-vue="moins" aria-label="J'en ai bu une">−</button>
+        <span>${b.quantite}</span>
+        <button type="button" data-vue="plus" aria-label="Ajouter une bouteille">+</button>
+        <span class="petit" style="font-size:.85rem">bouteille${b.quantite > 1 ? 's' : ''}</span>
+      </div>
+      <div class="petit" style="text-align:right">
+        ${v ? `≈ ${fmtEuro(v)} / bout.` : ''}${b.prix ? `<br>payé ${fmtEuro(b.prix)}` : ''}
+      </div>
+    </div>
+    ${b.emplacement ? `<div class="petit">📍 ${esc(b.emplacement)}</div>` : ''}
+
+    <section>
+      <h3>Quand le boire</h3>
+      ${st ? `<div><span class="badge ${st.cls}">${st.txt}</span></div>` : '<p class="petit">Fenêtre de dégustation inconnue.</p>'}
+      ${b.garde ? `<div class="fiche">${htmlGarde(b.garde)}</div>`
+        : (b.apogee ? `<p class="petit">${esc(b.apogee)}</p>` : '')}
+      <div class="actions" style="margin:0; flex-wrap:wrap">
+        <button type="button" class="btn ${b.garde ? 'secondary' : 'primary'} petit-btn" data-vue="garde">🎯 ${b.garde ? 'Mettre à jour la garde' : 'Affiner la garde'}</button>
+        <button type="button" class="btn secondary petit-btn" data-vue="degust">📝 Noter une dégustation</button>
+      </div>
+      <p class="search-status${erreur ? ' err' : ''}" ${message ? '' : 'hidden'}>${enCours ? '<span class="spin"></span>' : ''}${esc(message)}</p>
+    </section>
+
+    ${degust.length ? `
+    <section>
+      <h3>Mes dégustations</h3>
+      ${degust.slice().reverse().map((x) => `<div class="petit" style="color:var(--text)">${new Date(x.date).toLocaleDateString('fr-FR')} · <strong>${esc(ETATS_DEGUST[x.etat] || x.etat)}</strong>${x.note ? ' — ' + esc(x.note) : ''}</div>`).join('')}
+    </section>` : ''}
+
+    ${aFiche ? `<section><h3>Fiche</h3><div class="fiche">${htmlFiche(b, { avecQuand: false })}</div></section>` : ''}
+
+    ${b.notes ? `<section><h3>Mes notes</h3><p style="white-space:pre-wrap; margin:0">${esc(b.notes)}</p></section>` : ''}
+
+    <div class="actions">
+      <button type="button" class="btn secondary" data-vue="fermer">Fermer</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" data-vue="modifier">✏️ Modifier</button>
+    </div>`;
+}
+
+$('#vueContenu').addEventListener('click', async (e) => {
+  const act = e.target.closest('[data-vue]')?.dataset.vue;
+  if (!act) return;
+  const b = bottles.find((x) => x.id === vueId);
+  if (act === 'fermer') return $('#dlgVue').close();
+  if (!b) return;
+
+  if (act === 'modifier') {
+    retourVue = b.id;
+    $('#dlgVue').close();
+    return ouvrirFormulaire(b);
+  }
+  if (act === 'plus' || act === 'moins') {
+    if (act === 'plus') b.quantite += 1;
+    else if (b.quantite > 0) {
+      b.quantite -= 1;
+      if (b.quantite === 0 && confirm('Dernière bouteille bue ! Retirer ce vin de la cave ?\n(Annuler pour le garder dans la liste.)')) {
+        bottles = bottles.filter((x) => x.id !== b.id);
+        await enregistrer(); afficher();
+        return $('#dlgVue').close();
+      }
+    }
+    await enregistrer(); afficher(); afficherVue();
+    return;
+  }
+  if (act === 'degust') {
+    const choix = prompt('Comment était le vin ?\n1 = encore fermé / trop jeune\n2 = à point\n3 = fatigué / sur le déclin', '2');
+    if (choix === null) return;
+    const etat = { 1: 'ferme', 2: 'point', 3: 'fatigue' }[choix.trim()];
+    if (!etat) return afficherVue('Répondez 1, 2 ou 3.', true);
+    const note = (prompt('Votre commentaire (facultatif) :', '') || '').trim().slice(0, 300);
+    b.degustations = [...(b.degustations || []), { date: new Date().toISOString(), etat, note }];
+    await enregistrer(); afficher();
+    return afficherVue('Dégustation notée. « 🎯 Mettre à jour la garde » en tiendra compte.');
+  }
+  if (act === 'garde') {
+    const code = codeAcces();
+    if (!code) return;
+    afficherVue('Recherche des fenêtres de dégustation (critiques, domaine, CellarTracker, millésime)… ≈ 30 s', false, true);
+    for (const x of document.querySelectorAll('#vueContenu button')) x.disabled = true;
+    try {
+      const { photo, garde, degustations, ...vin } = b;
+      const g = await appelerAPI({ mode: 'garde', vin, degustations: degustations || [] }, code);
+      b.garde = { ...g, le: new Date().toISOString() };
+      b.boireDe = g.ouverture;
+      b.boireA = g.avant;
+      await enregistrer(); afficher();
+      afficherVue('✓ Fenêtre de dégustation mise à jour.');
+    } catch (err) {
+      afficherVue('Échec : ' + err.message, true);
+    }
+  }
+});
+
+// Après « Modifier » (enregistré ou annulé), retour sur la page de consultation
+$('#dlg').addEventListener('close', () => {
+  const id = retourVue;
+  retourVue = null;
+  if (id && bottles.some((x) => x.id === id)) ouvrirVue(bottles.find((x) => x.id === id));
+});
+
 /* ---------- Actions sur la liste ---------- */
 $('#list').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-act]');
@@ -1055,7 +1203,7 @@ $('#list').addEventListener('click', async (e) => {
   const b = bottles.find((x) => x.id === id);
   if (!b) return;
 
-  if (btn.dataset.act === 'edit') return ouvrirFormulaire(b);
+  if (btn.dataset.act === 'edit') return ouvrirVue(b);
   if (btn.dataset.act === 'plus') b.quantite += 1;
   if (btn.dataset.act === 'moins' && b.quantite > 0) {
     b.quantite -= 1;
