@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.4">
+<meta name="app-version" content="2026-10-10.5">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -286,6 +286,7 @@
 
 <main class="wrap" id="vueCave">
   <div class="toolbar">
+    <button class="btn primary" id="btnAccord" style="width:100%">🍽️ Que boire avec mon repas ?</button>
     <input type="search" id="search" placeholder="Rechercher un domaine, une appellation…">
     <div class="chips" id="chips"></div>
     <div class="selects">
@@ -412,6 +413,22 @@
       <span class="spacer"></span>
       <button type="button" class="btn primary" id="lotGo" hidden>Ajouter</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="dlgAccord">
+  <div class="cmd" id="accordContenu">
+    <h2>Que boire ?</h2>
+    <label class="f">Ce que vous allez manger
+      <textarea id="ac-repas" rows="2" placeholder="ex. côte de bœuf, gratin dauphinois · ou : sushis · ou : plateau de comté, beaufort, chèvre"></textarea>
+    </label>
+    <div class="chips" id="ac-occasion">
+      <button type="button" class="chip" data-occ="quotidien" aria-pressed="true">Dîner du quotidien</button>
+      <button type="button" class="chip" data-occ="belle" aria-pressed="false">✨ Belle occasion</button>
+    </div>
+    <div><button type="button" class="btn primary" id="ac-go">Trouver dans ma cave</button></div>
+    <p class="search-status" id="ac-statut" hidden></p>
+    <div id="ac-resultat" style="display:grid; gap:10px"></div>
   </div>
 </dialog>
 
@@ -1074,6 +1091,106 @@ $('#btnDelete').onclick = async () => {
   $('#dlg').close();
   afficher();
 };
+
+/* ---------- Que boire avec mon repas ? ---------- */
+let occasionAccord = 'quotidien';
+
+$('#btnAccord').onclick = () => {
+  statutGenerique($('#ac-statut'), '');
+  $('#dlgAccord').showModal();
+  setTimeout(() => $('#ac-repas').focus(), 50);
+};
+$('#ac-occasion').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-occ]');
+  if (!b) return;
+  occasionAccord = b.dataset.occ;
+  for (const x of document.querySelectorAll('#ac-occasion .chip')) x.setAttribute('aria-pressed', String(x === b));
+});
+
+// Résumé compact de la cave envoyé au sommelier (uniquement les bouteilles en stock)
+function caveCompacte() {
+  return bottles.filter((b) => b.quantite > 0).map((b) => {
+    const st = statut(b);
+    const g = b.garde;
+    return {
+      id: b.id,
+      vin: nomVin(b),
+      couleur: b.couleur || '',
+      region: b.region || '',
+      quantite: b.quantite,
+      valeur: Math.round(valeurUnitaire(b)) || undefined,
+      maturite: st ? st.txt : 'inconnue',
+      fenetre: g ? `ouverture ${g.ouverture}, apogée ${g.apogeeDe}-${g.apogeeA}, avant ${g.avant}` : (b.boireDe || b.boireA ? `${b.boireDe || '?'}-${b.boireA || '?'}` : undefined),
+      accords: Array.isArray(b.accords) ? b.accords.slice(0, 4) : undefined,
+      style: b.description ? String(b.description).slice(0, 160) : undefined,
+      cepages: b.cepages || undefined,
+    };
+  });
+}
+
+$('#ac-go').onclick = async () => {
+  const repas = $('#ac-repas').value.trim();
+  if (repas.length < 2) return statutGenerique($('#ac-statut'), 'Dites ce que vous allez manger.', true);
+  const cave = caveCompacte();
+  if (!cave.length) return statutGenerique($('#ac-statut'), 'Votre cave est vide.', true);
+  const code = codeAcces();
+  if (!code) return;
+  $('#ac-go').disabled = true;
+  $('#ac-resultat').innerHTML = '';
+  statutGenerique($('#ac-statut'), `Le sommelier parcourt vos ${cave.length} vins…`, false, true);
+  try {
+    const r = await appelerAPI({ mode: 'accord', repas, occasion: occasionAccord, cave }, code);
+    statutGenerique($('#ac-statut'), '');
+    afficherAccord(r);
+  } catch (e) {
+    statutGenerique($('#ac-statut'), 'Échec : ' + e.message, true);
+  } finally {
+    $('#ac-go').disabled = false;
+  }
+};
+
+function afficherAccord(r) {
+  const choix = (r.choix || []).map((c) => ({ ...c, b: bottles.find((x) => x.id === c.id) })).filter((c) => c.b);
+  $('#ac-resultat').innerHTML = `
+    ${r.ideal ? `<p class="petit"><strong>Idéalement :</strong> ${esc(r.ideal)}</p>` : ''}
+    ${choix.map((c, i) => {
+      const st = statut(c.b);
+      return `
+      <div class="cmd-pers" data-accord="${esc(c.b.id)}">
+        <div class="ligne">
+          <strong>${i === 0 ? '🥇 ' : i === 1 ? '🥈 ' : i === 2 ? '🥉 ' : ''}${esc(nomVin(c.b))}</strong>
+          <span class="petit">${c.b.quantite} en cave</span>
+        </div>
+        ${st ? `<div><span class="badge ${st.cls}">${st.txt}</span></div>` : ''}
+        ${c.accord ? `<p style="margin:0">${esc(c.accord)}</p>` : ''}
+        ${c.maturite ? `<p class="petit" style="margin:0">⏳ ${esc(c.maturite)}</p>` : ''}
+        ${c.service ? `<p class="petit" style="margin:0">🌡️ ${esc(c.service)}</p>` : ''}
+        <div class="actions" style="margin:0">
+          <button type="button" class="link" data-ac="voir">Voir la fiche</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn primary petit-btn" data-ac="ouvrir">J'ouvre celle-ci</button>
+        </div>
+      </div>`;
+    }).join('')}
+    ${!choix.length ? '<p class="petit">Aucune bouteille de votre cave ne convient vraiment.</p>' : ''}
+    ${r.remarque ? `<p class="petit">💡 ${esc(r.remarque)}</p>` : ''}`;
+}
+
+$('#ac-resultat').addEventListener('click', async (e) => {
+  const act = e.target.closest('[data-ac]')?.dataset.ac;
+  const id = e.target.closest('[data-accord]')?.dataset.accord;
+  const b = bottles.find((x) => x.id === id);
+  if (!act || !b) return;
+  if (act === 'voir') { $('#dlgAccord').close(); return ouvrirVue(b); }
+  if (act === 'ouvrir') {
+    if (!confirm(`Ouvrir une bouteille de ${nomVin(b)} ?\nElle sera retirée de votre stock.`)) return;
+    b.quantite = Math.max(0, b.quantite - 1);
+    await enregistrer();
+    afficher();
+    e.target.closest('[data-accord]').querySelector('.ligne .petit').textContent = `${b.quantite} en cave`;
+    statutGenerique($('#ac-statut'), `🍷 Bonne dégustation ! Pensez à noter vos impressions dans la fiche du vin.`);
+  }
+});
 
 /* ---------- Page de consultation d'un vin ---------- */
 let vueId = null;        // bouteille affichée en consultation

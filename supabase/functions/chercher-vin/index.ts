@@ -127,6 +127,23 @@ Règles :
 - Ne cite que des sources réellement consultées dans tes recherches, avec la fenêtre qu'elles donnent si elles en donnent une. Si aucune source ne donne de fenêtre, dis-le et mets confiance « faible » ou « moyenne ».
 - Réponds en français.`;
 
+// Mode « accord » : choisir dans la cave les meilleures bouteilles pour un repas
+const CONSIGNE_ACCORD = `Tu es le sommelier personnel de l'utilisateur. Il te décrit ce qu'il va manger ; tu choisis dans SA cave (liste fournie, chaque vin a un identifiant) les meilleures bouteilles à ouvrir.
+Critères, dans cet ordre :
+1. l'accord mets-vin (structure, acidité, tanins, intensité aromatique, sauce, cuisson, accompagnements) ;
+2. la maturité : privilégie les vins à l'apogée ou à boire bientôt ; écarte ou signale un vin trop jeune (sauf s'il est très adapté, avec conseil de carafage) ou en déclin ;
+3. l'occasion : « quotidien » → évite d'ouvrir les bouteilles les plus précieuses ; « belle occasion » → n'hésite pas à proposer les plus belles.
+Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
+{
+  "plat": "reformulation courte du repas",
+  "ideal": "le profil de vin idéal pour ce plat, en une phrase",
+  "choix": [
+    { "id": "identifiant exact du vin dans la liste", "accord": "pourquoi il va avec ce plat (1-2 phrases)", "maturite": "où il en est (1 phrase)", "service": "température, carafage, moment" }
+  ],
+  "remarque": "si rien dans la cave ne convient vraiment, dis-le et suggère quoi acheter ; sinon chaîne vide"
+}
+Règles : 3 à 5 choix maximum, du meilleur au moins bon ; uniquement des identifiants présents dans la liste ; ne propose pas un vin dont la quantité est 0. Réponds en français.`;
+
 function reponse(corps: unknown, statut: number, cors: Record<string, string>) {
   return new Response(JSON.stringify(corps), {
     status: statut,
@@ -291,6 +308,46 @@ async function affinerGarde(
   }
 }
 
+async function conseillerAccord(
+  cle: string,
+  repas: string,
+  occasion: string,
+  cave: unknown[],
+  cors: Record<string, string>,
+) {
+  const lignes = cave.slice(0, 500).map((x) => {
+    const v = x as Record<string, unknown>;
+    return JSON.stringify(v).slice(0, 600);
+  }).join("\n");
+  const annee = new Date().getFullYear();
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: MODELE, max_tokens: 2500, system: CONSIGNE_ACCORD,
+        messages: [{ role: "user", content: `Nous sommes en ${annee}.\nRepas : ${repas}\nOccasion : ${occasion}\n\nMa cave (un vin par ligne) :\n${lignes}` }],
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      console.error("Erreur API Anthropic", data);
+      return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
+    }
+    const texte = (data.content ?? [])
+      .filter((b: { type: string }) => b.type === "text")
+      .map((b: { text: string }) => b.text)
+      .join("\n");
+    const res = extraireJSON(texte);
+    const ids = new Set(cave.map((x) => String((x as Record<string, unknown>).id)));
+    res.choix = (Array.isArray(res.choix) ? res.choix : []).filter((c: Record<string, unknown>) => ids.has(String(c.id))).slice(0, 5);
+    return reponse(res, 200, cors);
+  } catch (e) {
+    console.error(e);
+    return reponse({ erreur: "Impossible de proposer un accord, réessayez." }, 500, cors);
+  }
+}
+
 async function detecter(
   cle: string,
   image: { media_type: string; data: string },
@@ -364,12 +421,21 @@ Deno.serve(async (req) => {
   let pdf = "";
   let texteTableau = "";
   let vinGarde: Record<string, unknown> | null = null;
+  let repas = "";
+  let occasion = "quotidien";
+  let cave: unknown[] = [];
   let degustations: unknown[] = [];
   try {
     const corps = await req.json();
     requete = String(corps.requete ?? "").trim();
     if (corps.mode === "detecter") mode = "detecter";
     if (corps.mode === "propale") mode = "propale";
+    if (corps.mode === "accord") {
+      mode = "accord";
+      repas = String(corps.repas ?? "").trim().slice(0, 500);
+      occasion = corps.occasion === "belle" ? "belle occasion" : "quotidien";
+      cave = Array.isArray(corps.cave) ? corps.cave : [];
+    }
     if (corps.mode === "garde") {
       mode = "garde";
       vinGarde = (corps.vin && typeof corps.vin === "object") ? corps.vin : null;
@@ -393,6 +459,12 @@ Deno.serve(async (req) => {
     return reponse({ erreur: "Requête invalide" }, 400, cors);
   }
   await noterRecherche(req, mode === "rechercher" ? (image ? "photo" : "texte") : mode);
+
+  if (mode === "accord") {
+    if (repas.length < 2) return reponse({ erreur: "Dites ce que vous allez manger" }, 400, cors);
+    if (!cave.length) return reponse({ erreur: "Votre cave est vide" }, 400, cors);
+    return await conseillerAccord(cle, repas, occasion, cave, cors);
+  }
 
   if (mode === "garde") {
     if (!vinGarde || !(vinGarde.domaine || vinGarde.appellation)) return reponse({ erreur: "Vin à préciser" }, 400, cors);
