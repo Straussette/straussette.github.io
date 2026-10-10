@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.12">
+<meta name="app-version" content="2026-10-10.13">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -455,6 +455,10 @@
     <p class="search-status" id="ac-statut" hidden></p>
     <div id="ac-resultat" style="display:grid; gap:10px"></div>
   </div>
+</dialog>
+
+<dialog id="dlgPartage">
+  <div class="cmd vue-vin" id="partageContenu"></div>
 </dialog>
 
 <dialog id="dlgVue">
@@ -1315,6 +1319,120 @@ function boireUne(b) {
   return true;
 }
 
+/* ---------- Partage d'une fiche ---------- */
+// Ce qui est partagé : la fiche du vin et mes dégustations — jamais prix d'achat, emplacement, stock ni notes perso
+const CHAMPS_PARTAGE = ['domaine', 'cuvee', 'appellation', 'classement', 'region', 'pays', 'millesime', 'couleur', 'format',
+  'cepages', 'description', 'accords', 'service', 'apogee', 'boireDe', 'boireA', 'garde', 'degustations', 'prixMin', 'prixMax'];
+
+function texteFiche(b) {
+  const g = b.garde;
+  const lignes = [`🍷 ${nomVin(b)}`];
+  if (b.region) lignes.push(b.region);
+  const st = statut(b);
+  if (g) lignes.push(`⏳ Ouverture ${g.ouverture} · apogée ${g.apogeeDe}–${g.apogeeA} · avant ${g.avant}`);
+  else if (st) lignes.push(`⏳ ${st.txt}`);
+  if (b.description) lignes.push('', b.description);
+  if (Array.isArray(b.accords) && b.accords.length) lignes.push('', '🍽️ ' + b.accords.join(', '));
+  if (b.service) lignes.push('🌡️ ' + b.service);
+  const d = (b.degustations || []).at(-1);
+  if (d) lignes.push('', `📝 Ma dégustation (${new Date(d.date).toLocaleDateString('fr-FR')}) : ${ETATS_DEGUST[d.etat] || d.etat}${d.sur20 != null ? ` · ${String(d.sur20).replace('.', ',')}/20` : ''}${d.note ? ' — ' + d.note : ''}`);
+  lignes.push('', 'Partagé depuis Ma Cave · ' + location.origin + location.pathname);
+  return lignes.join('\n');
+}
+
+async function creerLienPartage(b) {
+  if (!session) throw new Error('connectez-vous pour partager un lien');
+  const data = Object.fromEntries(CHAMPS_PARTAGE.filter((k) => b[k] !== undefined && b[k] !== '').map((k) => [k, b[k]]));
+  if (b.partageId) {
+    // Lien déjà créé : on met simplement la copie à jour
+    await jsonPatch(`/rest/v1/partages?id=eq.${b.partageId}`, { data, actif: true });
+  } else {
+    const id = nouvelId();
+    await jsonPost('/rest/v1/partages', { id, bouteille_id: b.id, data });
+    b.partageId = id;
+    await enregistrer();
+  }
+  return `${location.origin}${location.pathname}#fiche=${b.partageId}`;
+}
+
+let ficheRecue = null;
+
+// Ouverture d'un lien de fiche partagée : visible même sans compte
+async function traiterLienFiche() {
+  const m = /fiche=([0-9a-f-]{36})/i.exec(location.hash);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const el = $('#partageContenu');
+  el.innerHTML = '<p><span class="spin"></span>Chargement de la fiche…</p>';
+  $('#dlgPartage').showModal();
+  try {
+    const r = await sbFetch('/rest/v1/rpc/lire_partage', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pid: m[1] }),
+    }, false);
+    if (!Array.isArray(r) || !r.length) throw new Error('introuvable');
+    ficheRecue = r[0];
+    afficherFicheRecue();
+  } catch {
+    el.innerHTML = '<h2>Fiche indisponible</h2><p>Ce lien n\'existe pas ou son auteur a arrêté le partage.</p><div class="actions"><button class="btn secondary" data-partage="fermer">Fermer</button></div>';
+  }
+}
+
+function afficherFicheRecue(message = '', erreur = false) {
+  const { data: b, auteur, cree } = ficheRecue;
+  const st = statut(b);
+  const cru = niveauCru(b);
+  const degust = b.degustations || [];
+  $('#partageContenu').innerHTML = `
+    <div class="petit">${auteur ? `Partagé par <strong>${esc(auteur)}</strong>` : 'Fiche partagée'}${cree ? ' le ' + new Date(cree).toLocaleDateString('fr-FR') : ''}</div>
+    <div class="vue-tete">
+      <div class="ph vin c-${slug(b.couleur)}" style="width:64px; height:84px; border-radius:10px; flex:none">${svgBouteille(b)}</div>
+      <div class="info">
+        <h2>${esc(b.domaine || b.appellation || 'Vin')}${cru === 'gc' ? '<span class="cru">GC</span>' : cru === 'pc' ? '<span class="cru">1er cru</span>' : ''}</h2>
+        ${b.cuvee ? `<div style="font-weight:600">${esc(b.cuvee)}</div>` : ''}
+        <div class="sub"><span class="dot c-${slug(b.couleur)}"></span>${esc([b.appellation, b.millesime || 'NM', b.region, b.format].filter(Boolean).join(' · '))}</div>
+      </div>
+    </div>
+    <section>
+      <h3>Quand le boire</h3>
+      ${st ? `<div><span class="badge ${st.cls}">${st.txt}</span></div>` : '<p class="petit">Fenêtre de dégustation non renseignée.</p>'}
+      ${b.garde ? `<div class="fiche">${htmlGarde(b.garde)}</div>` : (b.apogee ? `<p class="petit">${esc(b.apogee)}</p>` : '')}
+    </section>
+    ${degust.length ? `<section><h3>Dégustations${auteur ? ' de ' + esc(auteur) : ''}</h3>
+      ${degust.slice().reverse().map((x) => `<div class="petit" style="color:var(--text)">${new Date(x.date).toLocaleDateString('fr-FR')} · <strong>${esc(ETATS_DEGUST[x.etat] || x.etat)}</strong>${x.sur20 != null ? ` · <strong>${String(x.sur20).replace('.', ',')}/20</strong>` : ''}${x.note ? ' — ' + esc(x.note) : ''}</div>`).join('')}</section>` : ''}
+    ${b.description || b.accords || b.service ? `<section><h3>Fiche</h3><div class="fiche">${htmlFiche(b, { avecQuand: false })}</div></section>` : ''}
+    <p class="search-status${erreur ? ' err' : ''}" ${message ? '' : 'hidden'}>${esc(message)}</p>
+    <div class="actions">
+      <button type="button" class="btn secondary" data-partage="fermer">Fermer</button>
+      <span class="spacer"></span>
+      ${session ? '<button type="button" class="btn primary" data-partage="ajouter">➕ Ajouter à ma cave</button>'
+        : '<button type="button" class="btn primary" data-partage="compte">Créer un compte Ma Cave</button>'}
+    </div>`;
+}
+
+$('#partageContenu').addEventListener('click', async (e) => {
+  const act = e.target.closest('[data-partage]')?.dataset.partage;
+  if (!act) return;
+  if (act === 'fermer') return $('#dlgPartage').close();
+  if (act === 'compte') {
+    $('#dlgPartage').close();
+    modeCompte = 'inscription'; compteStatut(''); afficherCompte();
+    return $('#dlgCompte').showModal();
+  }
+  if (act === 'ajouter' && ficheRecue) {
+    const n = parseInt(prompt('Combien de bouteilles ajouter à votre cave ?', '1') || '', 10);
+    if (!(n >= 0)) return;
+    const { degustations, garde, ...vin } = ficheRecue.data;
+    const nb = { id: nouvelId(), ...vin, domaine: domaineCanonique(vin.domaine), garde, quantite: n,
+      notes: `Fiche partagée par ${ficheRecue.auteur || 'un ami'}`, photo: null, ajoute: Date.now() };
+    const existant = bottles.find((x) => cleVin(x) === cleVin(nb));
+    if (existant) existant.quantite += n; else bottles.push(nb);
+    await enregistrer();
+    afficher();
+    afficherFicheRecue(existant ? `✓ ${n} bouteille(s) ajoutée(s) au vin déjà présent dans votre cave.` : '✓ Vin ajouté à votre cave.');
+  }
+});
+window.addEventListener('hashchange', () => { if (/fiche=/.test(location.hash)) traiterLienFiche(); });
+
 /* ---------- Page de consultation d'un vin ---------- */
 let vueId = null;        // bouteille affichée en consultation
 let retourVue = null;    // après « Modifier », on revient sur la consultation
@@ -1382,6 +1500,15 @@ function afficherVue(message = '', erreur = false, enCours = false) {
 
     ${b.notes ? `<section><h3>Mes notes</h3><p style="white-space:pre-wrap; margin:0">${esc(b.notes)}</p></section>` : ''}
 
+    <section>
+      <h3>Partager</h3>
+      <div class="actions" style="margin:0; flex-wrap:wrap">
+        <button type="button" class="btn secondary petit-btn" data-vue="partagerTexte">📤 Envoyer le texte</button>
+        <button type="button" class="btn secondary petit-btn" data-vue="partagerLien">🔗 Envoyer un lien</button>
+        ${b.partageId ? '<button type="button" class="link" data-vue="arreterPartage">Arrêter le partage par lien</button>' : ''}
+      </div>
+    </section>
+
     <div class="actions">
       <button type="button" class="btn secondary" data-vue="fermer">Fermer</button>
       <span class="spacer"></span>
@@ -1407,6 +1534,39 @@ $('#vueContenu').addEventListener('click', async (e) => {
     await enregistrer(); afficher();
     afficherVue(b.quantite === 0 && act === 'moins'
       ? 'Dernière bouteille bue 🍷 Le vin reste en mémoire dans l\'onglet « 📖 Bus ». Notez vos impressions !' : '');
+    return;
+  }
+  if (act === 'partagerTexte') {
+    const texte = texteFiche(b);
+    try {
+      if (navigator.share) await navigator.share({ text: texte });
+      else { await navigator.clipboard.writeText(texte); afficherVue('Texte copié : collez-le dans WhatsApp ou un message.'); }
+    } catch { /* partage annulé */ }
+    return;
+  }
+  if (act === 'partagerLien') {
+    afficherVue('Création du lien…', false, true);
+    try {
+      const lien = await creerLienPartage(b);
+      const titre = nomVin(b);
+      try {
+        if (navigator.share) await navigator.share({ title: titre, text: `🍷 ${titre} — ma fiche sur Ma Cave :`, url: lien });
+        else { await navigator.clipboard.writeText(lien); return afficherVue('Lien copié : collez-le dans WhatsApp ou un message.'); }
+      } catch { /* partage annulé */ }
+      afficherVue('Lien prêt. Les personnes qui l\'ouvrent voient cette fiche (sans le reste de votre cave).');
+    } catch (e) {
+      afficherVue('Partage impossible : ' + e.message, true);
+    }
+    return;
+  }
+  if (act === 'arreterPartage') {
+    if (!confirm('Arrêter le partage ? Le lien envoyé ne fonctionnera plus.')) return;
+    try {
+      await jsonPatch(`/rest/v1/partages?id=eq.${b.partageId}`, { actif: false });
+      delete b.partageId;
+      await enregistrer();
+      afficherVue('Partage arrêté.');
+    } catch (e) { afficherVue('Échec : ' + e.message, true); }
     return;
   }
   if (act === 'degust') {
@@ -3218,7 +3378,8 @@ document.addEventListener('touchstart', () => { if (!document.querySelector('dia
   else if (session) await synchroniser({ telecharger: true });
   if (session) await assurerProfil();
   await majOnglets();
-  if (/commande=/.test(location.hash)) await traiterLienCommande();
+  if (/fiche=/.test(location.hash)) await traiterLienFiche();
+  else if (/commande=/.test(location.hash)) await traiterLienCommande();
   else if (session) chargerCommandes({ silencieux: true }); // bouteilles de commandes reçues
 })();
 </script>
