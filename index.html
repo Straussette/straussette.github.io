@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.9">
+<meta name="app-version" content="2026-10-10.10">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -308,6 +308,8 @@
         <option value="aboire">À boire d'abord</option>
         <option value="domaine">Domaine A → Z</option>
         <option value="millesime">Millésime ↑</option>
+        <option value="valeurDesc">Estimation ↓ (plus chères)</option>
+        <option value="valeurAsc">Estimation ↑ (moins chères)</option>
       </select>
     </div>
   </div>
@@ -767,6 +769,9 @@ function afficher() {
     domaine: (a, b) => (a.domaine || '').localeCompare(b.domaine || '', 'fr'),
     millesime: (a, b) => (Number(a.millesime) || 9999) - (Number(b.millesime) || 9999),
     aboire: (a, b) => (Number(a.boireA) || 9999) - (Number(b.boireA) || 9999),
+    // Vins sans estimation toujours en fin de liste
+    valeurDesc: (a, b) => (valeurUnitaire(b) || -1) - (valeurUnitaire(a) || -1),
+    valeurAsc: (a, b) => (valeurUnitaire(a) || Infinity) - (valeurUnitaire(b) || Infinity),
   };
   items.sort(comparateurs[tri]);
 
