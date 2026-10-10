@@ -19,6 +19,7 @@ Fais quelques recherches web ciblées (site du domaine, guides, critiques, cavis
   "domaine": "nom du domaine ou château",
   "cuvee": "nom de la cuvée, ou chaîne vide",
   "appellation": "appellation officielle",
+  "classement": "Grand cru | Premier cru | Grand cru classé | Premier grand cru classé | Cru classé | Cru bourgeois | chaîne vide si aucun",
   "region": "région viticole (ex. Rhône Nord, Bourgogne, Bordeaux)",
   "pays": "pays",
   "couleur": "une valeur parmi ${COULEURS.join(", ")}",
@@ -52,6 +53,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
       "domaine": "nom du domaine ou château",
       "cuvee": "nom de la cuvée, ou chaîne vide",
       "appellation": "appellation",
+      "classement": "Grand cru | Premier cru | Cru classé… ou chaîne vide",
       "millesime": 2015,
       "couleur": "une valeur parmi ${COULEURS.join(", ")}",
       "nombre": 2,
@@ -77,6 +79,7 @@ Extrais chaque vin proposé avec son prix. Réponds UNIQUEMENT avec un objet JSO
       "domaine": "nom du domaine ou château",
       "cuvee": "nom de la cuvée, ou chaîne vide",
       "appellation": "appellation",
+      "classement": "Grand cru | Premier cru | Cru classé… ou chaîne vide",
       "millesime": 2022,
       "couleur": "une valeur parmi ${COULEURS.join(", ")}",
       "format": "75cl | magnum | demi | autre (préciser)",
@@ -96,6 +99,33 @@ Règles :
 - Une ligne par vin et par format (un magnum est une ligne distincte).
 - Complète la couleur et l'appellation d'après tes connaissances si c'est évident.
 - Ignore les lignes qui ne sont pas des vins (frais de port, totaux…).`;
+
+// Mode « garde » : recherche ciblée sur la fenêtre de dégustation d'un vin précis
+const CONSIGNE_GARDE = `Tu es un sommelier spécialiste du vieillissement des vins. Détermine la fenêtre de dégustation la plus précise possible pour CE vin, CE millésime et CE format.
+Méthode — cherche en priorité :
+1. les fenêtres publiées par les critiques (Vinous, Wine Advocate, Jancis Robinson, Decanter, Wine Spectator, Burghound, Bettane+Desseauve, La Revue du vin de France, Guide Hachette) ;
+2. les indications du domaine (fiche technique, potentiel de garde annoncé) ;
+3. les retours de dégustation récents (CellarTracker, forums, cavistes) : dans quel état le vin est-il aujourd'hui ?
+4. le profil du millésime dans cette région (tableaux de millésimes : précoce, de garde, hétérogène).
+Croise ces sources et tranche : on veut des dates resserrées et utiles, pas une plage prudente.
+Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
+{
+  "ouverture": 2026,
+  "apogeeDe": 2029,
+  "apogeeA": 2036,
+  "avant": 2042,
+  "explication": "2 à 4 phrases : pourquoi ces dates (style du domaine, millésime, retours de dégustation)",
+  "millesime": "appréciation courte du millésime dans cette région",
+  "sources": [{ "nom": "Vinous (A. Galloni)", "fenetre": "2028-2040", "url": "https://..." }],
+  "confiance": "haute | moyenne | faible",
+  "conseil": "conseil pratique : carafage, température, quand rouvrir une bouteille…"
+}
+Règles :
+- ouverture = année à partir de laquelle on peut l'ouvrir avec plaisir ; apogeeDe → apogeeA = sommet ; avant = à boire avant (début du déclin). Années en nombres, dans l'ordre.
+- Un magnum évolue plus lentement (décale vers plus tard) ; une demi-bouteille plus vite.
+- Les dégustations de l'utilisateur priment : « encore fermé » → décale l'apogée ; « à point » → l'apogée a commencé ; « fatigué » → avance la fin.
+- Ne cite que des sources réellement consultées dans tes recherches, avec la fenêtre qu'elles donnent si elles en donnent une. Si aucune source ne donne de fenêtre, dis-le et mets confiance « faible » ou « moyenne ».
+- Réponds en français.`;
 
 function reponse(corps: unknown, statut: number, cors: Record<string, string>) {
   return new Response(JSON.stringify(corps), {
@@ -199,6 +229,68 @@ async function extrairePropale(
   }
 }
 
+async function affinerGarde(
+  cle: string,
+  vin: Record<string, unknown>,
+  degustations: unknown[],
+  cors: Record<string, string>,
+) {
+  const champ = (k: string) => String(vin[k] ?? "").slice(0, 120).trim();
+  const description = [
+    `Domaine : ${champ("domaine")}`, `Cuvée : ${champ("cuvee") || "—"}`, `Appellation : ${champ("appellation")}`,
+    `Classement : ${champ("classement") || "—"}`, `Millésime : ${champ("millesime") || "non millésimé"}`,
+    `Couleur : ${champ("couleur")}`, `Format : ${champ("format") || "75 cl"}`,
+  ].join("\n");
+  const notes = (Array.isArray(degustations) ? degustations : []).slice(-10)
+    .map((d) => {
+      const x = d as Record<string, unknown>;
+      return `- ${String(x.date ?? "").slice(0, 10)} : ${String(x.etat ?? "")}${x.note ? " — " + String(x.note).slice(0, 200) : ""}`;
+    }).join("\n");
+  const annee = new Date().getFullYear();
+  const messages: unknown[] = [{
+    role: "user",
+    content: `Nous sommes en ${annee}. Vin à étudier :\n${description}` + (notes ? `\n\nDégustations de l'utilisateur :\n${notes}` : ""),
+  }];
+  try {
+    for (let tour = 0; tour < 4; tour++) {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: MODELE, max_tokens: 2500, system: CONSIGNE_GARDE, messages,
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6,
+            user_location: { type: "approximate", country: "FR", timezone: "Europe/Paris" } }],
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        console.error("Erreur API Anthropic", data);
+        return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
+      }
+      if (data.stop_reason === "pause_turn") {
+        messages.push({ role: "assistant", content: data.content });
+        continue;
+      }
+      const texte = (data.content ?? [])
+        .filter((b: { type: string }) => b.type === "text")
+        .map((b: { text: string }) => b.text)
+        .join("\n");
+      const g = extraireJSON(texte);
+      // Années cohérentes et dans l'ordre
+      const ans = ["ouverture", "apogeeDe", "apogeeA", "avant"].map((k) => Number(g[k]) || null);
+      if (ans.some((x) => !x || x < 1900 || x > 2150)) return reponse({ erreur: "Fenêtre introuvable pour ce vin" }, 422, cors);
+      const tries = [...ans as number[]].sort((a, b) => a - b);
+      [g.ouverture, g.apogeeDe, g.apogeeA, g.avant] = tries;
+      g.sources = (Array.isArray(g.sources) ? g.sources : []).slice(0, 8);
+      return reponse(g, 200, cors);
+    }
+    return reponse({ erreur: "La recherche a pris trop de temps, réessayez." }, 504, cors);
+  } catch (e) {
+    console.error(e);
+    return reponse({ erreur: "Impossible de lire la réponse, réessayez." }, 500, cors);
+  }
+}
+
 async function detecter(
   cle: string,
   image: { media_type: string; data: string },
@@ -271,11 +363,18 @@ Deno.serve(async (req) => {
   let image: { media_type: string; data: string } | null = null;
   let pdf = "";
   let texteTableau = "";
+  let vinGarde: Record<string, unknown> | null = null;
+  let degustations: unknown[] = [];
   try {
     const corps = await req.json();
     requete = String(corps.requete ?? "").trim();
     if (corps.mode === "detecter") mode = "detecter";
     if (corps.mode === "propale") mode = "propale";
+    if (corps.mode === "garde") {
+      mode = "garde";
+      vinGarde = (corps.vin && typeof corps.vin === "object") ? corps.vin : null;
+      degustations = Array.isArray(corps.degustations) ? corps.degustations : [];
+    }
     if (corps.document) {
       const m = /^data:application\/pdf;base64,([A-Za-z0-9+/=]+)$/.exec(String(corps.document));
       if (!m) return reponse({ erreur: "Seuls les PDF sont acceptés" }, 400, cors);
@@ -294,6 +393,11 @@ Deno.serve(async (req) => {
     return reponse({ erreur: "Requête invalide" }, 400, cors);
   }
   await noterRecherche(req, mode === "rechercher" ? (image ? "photo" : "texte") : mode);
+
+  if (mode === "garde") {
+    if (!vinGarde || !(vinGarde.domaine || vinGarde.appellation)) return reponse({ erreur: "Vin à préciser" }, 400, cors);
+    return await affinerGarde(cle, vinGarde, degustations, cors);
+  }
 
   if (mode === "propale") {
     if (pdf) return await extrairePropale(cle, { type: "document", media_type: "application/pdf", data: pdf }, cors);

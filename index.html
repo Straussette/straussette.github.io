@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-09.11">
+<meta name="app-version" content="2026-10-10.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -63,6 +63,7 @@
   }
   input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
   .selects { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .selects #cru { grid-column:1 / -1; }
   .group-h {
     display:flex; justify-content:space-between; align-items:baseline; gap:8px;
     margin:14px 2px 0; padding-bottom:4px; border-bottom:1px solid var(--border);
@@ -231,6 +232,13 @@
   .fiche .pill { font-size:.8rem; padding:2px 8px; border-radius:999px; background:var(--border); }
   .fiche a { color:var(--accent); word-break:break-all; font-size:.8rem; }
   .valeur { font-size:.8rem; color:var(--muted); margin-top:4px; }
+  .garde-zone { display:grid; gap:8px; }
+  .frise { display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; text-align:center; }
+  .frise div { padding:6px 2px; border-radius:8px; background:color-mix(in srgb, var(--b) 14%, transparent); color:var(--b); font-size:.78rem; font-weight:600; line-height:1.25; }
+  .frise div span { display:block; font-size:.95rem; }
+  .frise .actuelle { outline:2px solid var(--b); }
+  .cru { display:inline-block; font-size:.72rem; font-weight:700; padding:1px 6px; border-radius:6px; margin-left:4px; vertical-align:1px;
+         color:#8a6a12; background:color-mix(in srgb, #d4a72c 22%, transparent); }
 
   @media (max-width:600px) {
     .lot, .cmd { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
@@ -262,6 +270,12 @@
     <input type="search" id="search" placeholder="Rechercher un domaine, une appellation…">
     <div class="chips" id="chips"></div>
     <div class="selects">
+      <select id="cru" aria-label="Filtrer par classement">
+        <option value="tous">Tous les vins</option>
+        <option value="gcpc">Grands + premiers crus</option>
+        <option value="gc">Grands crus</option>
+        <option value="pc">Premiers crus</option>
+      </select>
       <select id="group" aria-label="Regrouper par">
         <option value="aucun">Sans groupes</option>
         <option value="garde">Boire / garder</option>
@@ -425,6 +439,17 @@
         <select id="f-couleur"></select>
       </label>
     </div>
+    <label class="f">Classement
+      <select id="f-classement">
+        <option value="">—</option>
+        <option>Premier cru</option>
+        <option>Grand cru</option>
+        <option>Premier grand cru classé</option>
+        <option>Grand cru classé</option>
+        <option>Cru classé</option>
+        <option>Cru bourgeois</option>
+      </select>
+    </label>
 
     <label class="f">Nombre de bouteilles
       <div class="stepper">
@@ -441,6 +466,15 @@
       <label class="f">À boire jusqu'à
         <input id="f-boireA" type="number" inputmode="numeric" min="1900" max="2150" placeholder="année">
       </label>
+    </div>
+    <div class="garde-zone">
+      <div class="actions" style="margin:0; flex-wrap:wrap">
+        <button type="button" class="btn secondary petit-btn" id="btnGarde">🎯 Affiner la garde</button>
+        <button type="button" class="btn secondary petit-btn" id="btnDegustation">📝 Noter une dégustation</button>
+      </div>
+      <p class="search-status" id="gardeStatut" hidden></p>
+      <div class="fiche" id="gardeBloc" hidden></div>
+      <div id="degustBloc" class="petit" hidden></div>
     </div>
     <div class="row">
       <label class="f">Prix d'achat (€ / bouteille)
@@ -564,6 +598,15 @@ function valeurUnitaire(b) {
 // Statut de la fenêtre de dégustation
 function statut(b) {
   const an = new Date().getFullYear();
+  const g = b.garde;
+  if (g && g.ouverture && g.avant) {
+    // Fenêtre affinée : ouverture → apogée → à boire avant
+    if (an < g.ouverture) return { cls: 'tot', txt: `Trop tôt · dès ${g.ouverture}, apogée ${g.apogeeDe}–${g.apogeeA}` };
+    if (an < g.apogeeDe) return { cls: 'ok', txt: `Ouvrable · apogée ${g.apogeeDe}–${g.apogeeA}` };
+    if (an <= g.apogeeA) return { cls: 'ok', txt: `🍷 À l'apogée · jusqu'à ${g.apogeeA}` };
+    if (an <= g.avant) return { cls: 'vite', txt: `À boire bientôt · avant ${g.avant}` };
+    return { cls: 'passe', txt: `À boire d'urgence · prévu avant ${g.avant}` };
+  }
   const de = Number(b.boireDe) || 0;
   const a = Number(b.boireA) || 0;
   if (!de && !a) return null;
@@ -571,6 +614,15 @@ function statut(b) {
   if (a && an > a) return { cls: 'passe', txt: `À boire d'urgence · prévu jusqu'à ${a}` };
   if (a && an >= a - 1) return { cls: 'vite', txt: `À boire bientôt · jusqu'à ${a}` };
   return { cls: 'ok', txt: a ? `Prêt à boire · jusqu'à ${a}` : 'Prêt à boire' };
+}
+
+// Niveau de cru déduit du classement (ou, à défaut, du nom et de l'appellation)
+function niveauCru(b) {
+  const t = sansAccent([b.classement, b.appellation, b.cuvee].filter(Boolean).join(' ')).toLowerCase();
+  // « Premier (grand) cru (classé) » d'abord : un 1er grand cru classé bordelais est un premier cru
+  if (/(premier|1er)\.? (grand )?cru/.test(t)) return 'pc';
+  if (/grand cru/.test(t)) return 'gc';
+  return '';
 }
 
 /* ---------- Affichage ---------- */
@@ -583,7 +635,7 @@ function carte(b) {
       <button class="card-main" data-act="edit">
         ${b.photo ? `<img src="${b.photo}" alt="">` : `<div class="ph c-${c}">🍷</div>`}
         <div class="info">
-          <div class="name">${esc(b.domaine || b.appellation || 'Sans nom')}${b.cuvee ? ` <span class="cuvee">· ${esc(b.cuvee)}</span>` : ''}</div>
+          <div class="name">${esc(b.domaine || b.appellation || 'Sans nom')}${b.cuvee ? ` <span class="cuvee">· ${esc(b.cuvee)}</span>` : ''}${niveauCru(b) === 'gc' ? '<span class="cru">GC</span>' : niveauCru(b) === 'pc' ? '<span class="cru">1er cru</span>' : ''}</div>
           <div class="sub"><span class="dot c-${c}"></span>${esc(sousTitre)}</div>
           ${st ? `<div class="badge ${st.cls}">${st.txt}</div>` : ''}
           ${b.emplacement ? `<div class="loc">📍 ${esc(b.emplacement)}</div>` : ''}
@@ -612,9 +664,11 @@ function afficher() {
   const q = norm($('#search').value);
   const tri = $('#sort').value;
 
+  const cru = $('#cru').value;
   let items = bottles.filter((b) =>
     (filtre === 'Tous' || b.couleur === filtre) &&
-    (!q || norm([b.domaine, b.cuvee, b.appellation, b.region, b.millesime, b.emplacement].join(' ')).includes(q)));
+    (cru === 'tous' || (cru === 'gcpc' ? !!niveauCru(b) : niveauCru(b) === cru)) &&
+    (!q || norm([b.domaine, b.cuvee, b.appellation, b.classement, b.region, b.millesime, b.emplacement].join(' ')).includes(q)));
 
   const comparateurs = {
     recent: (a, b) => b.ajoute - a.ajoute,
@@ -687,7 +741,7 @@ function cleGroupe(b, groupe) {
 }
 
 /* ---------- Formulaire ---------- */
-const CHAMPS = ['domaine', 'cuvee', 'appellation', 'region', 'millesime', 'couleur', 'quantite', 'boireDe', 'boireA', 'prix', 'emplacement', 'notes'];
+const CHAMPS = ['domaine', 'cuvee', 'appellation', 'classement', 'region', 'millesime', 'couleur', 'quantite', 'boireDe', 'boireA', 'prix', 'emplacement', 'notes'];
 $('#f-couleur').innerHTML = COULEURS.map((c) => `<option>${c}</option>`).join('');
 
 function ouvrirFormulaire(b = null) {
@@ -700,6 +754,12 @@ function ouvrirFormulaire(b = null) {
   montrerPhoto(b && b.photo);
   ficheEnCours = b && b.description ? Object.fromEntries(CHAMPS_FICHE.map((k) => [k, b[k]])) : null;
   afficherFiche(ficheEnCours);
+  gardeEnCours = b?.garde || null;
+  degustEnCours = [...(b?.degustations || [])];
+  afficherGarde();
+  statutGenerique($('#gardeStatut'), '');
+  // Classement non renseigné : on le déduit du nom quand c'est évident
+  if (b && !b.classement) { const n = niveauCru(b); if (n) $('#f-classement').value = n === 'gc' ? 'Grand cru' : 'Premier cru'; }
   $('#q').value = '';
   statutRecherche('');
   $('#dlg').showModal();
@@ -718,6 +778,7 @@ function lireFormulaire() {
     domaine: v('domaine'),
     cuvee: v('cuvee'),
     appellation: v('appellation'),
+    classement: v('classement'),
     region: v('region'),
     millesime: annee('millesime'),
     couleur: v('couleur'),
@@ -830,6 +891,7 @@ async function rechercherVin() {
     if (COULEURS.includes(f.couleur)) $('#f-couleur').value = f.couleur;
     remplir('boireDe', f.boireDe);
     remplir('boireA', f.boireA);
+    if (f.classement) $('#f-classement').value = [...$('#f-classement').options].some((o) => o.value === f.classement) ? f.classement : $('#f-classement').value;
 
     ficheEnCours = Object.fromEntries(CHAMPS_FICHE.map((k) => [k, f[k] ?? '']));
     afficherFiche(ficheEnCours);
@@ -840,6 +902,84 @@ async function rechercherVin() {
     bouton.disabled = false;
   }
 }
+
+/* ---------- Garde affinée (à la demande) et dégustations ---------- */
+let gardeEnCours = null;   // résultat de « Affiner la garde » pour la bouteille ouverte
+let degustEnCours = [];    // journal de dégustation de la bouteille ouverte
+
+const ETATS_DEGUST = { ferme: 'Encore fermé / trop jeune', point: 'À point', fatigue: 'Fatigué / sur le déclin' };
+
+function afficherGarde() {
+  const g = gardeEnCours;
+  const el = $('#gardeBloc');
+  if (!g) { el.hidden = true; el.innerHTML = ''; }
+  else {
+    const an = new Date().getFullYear();
+    const phases = [
+      ['Ouverture', `dès ${g.ouverture}`, '--tot', an >= g.ouverture && an < g.apogeeDe],
+      ['Apogée', `${g.apogeeDe}–${g.apogeeA}`, '--ok', an >= g.apogeeDe && an <= g.apogeeA],
+      ['Fin', `avant ${g.avant}`, '--vite', an > g.apogeeA && an <= g.avant],
+      ['Déclin', `après ${g.avant}`, '--passe', an > g.avant],
+    ];
+    const sources = (g.sources || []).filter((x) => x && x.nom);
+    el.innerHTML = `
+      <div class="frise">${phases.map(([t, d, c, act]) => `<div style="--b:var(${c})" class="${act ? 'actuelle' : ''}">${t}<span>${esc(d)}</span></div>`).join('')}</div>
+      ${g.explication ? `<p>${esc(g.explication)}</p>` : ''}
+      ${g.millesime ? `<div><h3>Le millésime</h3><p>${esc(g.millesime)}</p></div>` : ''}
+      ${g.conseil ? `<div><h3>Conseil</h3><p>${esc(g.conseil)}</p></div>` : ''}
+      <div><h3>Sources</h3>${sources.length
+        ? sources.map((x) => `<div>${/^https?:\/\//.test(x.url || '') ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.nom)}</a>` : esc(x.nom)}${x.fenetre ? ` — <strong>${esc(x.fenetre)}</strong>` : ''}</div>`).join('')
+        : '<p class="petit">Aucune fenêtre publiée trouvée : estimation à partir du domaine et du millésime.</p>'}</div>
+      <div class="meta"><span class="pill">Fiabilité : ${esc(g.confiance || '?')}</span>${g.le ? `<span class="pill">Mise à jour le ${new Date(g.le).toLocaleDateString('fr-FR')}</span>` : ''}</div>`;
+    el.hidden = false;
+  }
+  const d = $('#degustBloc');
+  d.hidden = !degustEnCours.length;
+  d.innerHTML = degustEnCours.length
+    ? '<strong>Mes dégustations</strong><br>' + degustEnCours.map((x, i) =>
+        `${new Date(x.date).toLocaleDateString('fr-FR')} · ${esc(ETATS_DEGUST[x.etat] || x.etat)}${x.note ? ' — ' + esc(x.note) : ''} <button type="button" class="link" data-suppr-degust="${i}">✕</button>`).join('<br>')
+    : '';
+}
+
+$('#btnGarde').onclick = async () => {
+  const vin = { ...lireFormulaire() };
+  if (!vin.domaine && !vin.appellation) return statutGenerique($('#gardeStatut'), 'Indiquez d\'abord le domaine ou l\'appellation.', true);
+  const code = codeAcces();
+  if (!code) return;
+  const bouton = $('#btnGarde');
+  bouton.disabled = true;
+  statutGenerique($('#gardeStatut'), 'Recherche des fenêtres de dégustation (critiques, domaine, CellarTracker, millésime)… ≈ 30 s', false, true);
+  try {
+    const b = editingId ? bottles.find((x) => x.id === editingId) : null;
+    const g = await appelerAPI({ mode: 'garde', vin: { ...vin, format: b?.format || '' }, degustations: degustEnCours }, code);
+    gardeEnCours = { ...g, le: new Date().toISOString() };
+    $('#f-boireDe').value = g.ouverture;
+    $('#f-boireA').value = g.avant;
+    afficherGarde();
+    statutGenerique($('#gardeStatut'), '✓ Fenêtre affinée. Enregistrez la bouteille pour la conserver.');
+  } catch (e) {
+    statutGenerique($('#gardeStatut'), 'Échec : ' + e.message, true);
+  } finally {
+    bouton.disabled = false;
+  }
+};
+
+$('#btnDegustation').onclick = () => {
+  const choix = prompt('Comment était le vin ?\n1 = encore fermé / trop jeune\n2 = à point\n3 = fatigué / sur le déclin', '2');
+  if (choix === null) return;
+  const etat = { 1: 'ferme', 2: 'point', 3: 'fatigue' }[choix.trim()];
+  if (!etat) return statutGenerique($('#gardeStatut'), 'Répondez 1, 2 ou 3.', true);
+  const note = (prompt('Un commentaire ? (facultatif)', '') || '').trim().slice(0, 300);
+  degustEnCours.push({ date: new Date().toISOString(), etat, note });
+  afficherGarde();
+  statutGenerique($('#gardeStatut'), 'Dégustation notée. Enregistrez, puis « 🎯 Affiner la garde » pour ajuster la fenêtre en tenant compte de votre avis.');
+};
+$('#degustBloc').addEventListener('click', (e) => {
+  const i = e.target.closest('[data-suppr-degust]')?.dataset.supprDegust;
+  if (i === undefined) return;
+  degustEnCours.splice(Number(i), 1);
+  afficherGarde();
+});
 
 $('#btnSearch').onclick = rechercherVin;
 $('#q').addEventListener('keydown', (e) => {
@@ -868,7 +1008,9 @@ $('#btnCancel').onclick = () => $('#dlg').close();
 
 $('#form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const data = { ...lireFormulaire(), ...(ficheEnCours || {}) };
+  const data = { ...lireFormulaire(), ...(ficheEnCours || {}), garde: gardeEnCours, degustations: degustEnCours };
+  if (!data.garde) delete data.garde;
+  if (!data.degustations.length) delete data.degustations;
   if (!data.domaine && !data.appellation) {
     alert("Indiquez au moins le domaine ou l'appellation.");
     return;
@@ -934,14 +1076,16 @@ $('#chips').addEventListener('click', (e) => {
 $('#search').addEventListener('input', afficher);
 $('#sort').addEventListener('change', () => { memoriserVue(); afficher(); });
 $('#group').addEventListener('change', () => { memoriserVue(); afficher(); });
+$('#cru').addEventListener('change', () => { memoriserVue(); afficher(); });
 // Le regroupement et le tri choisis sont retenus sur cet appareil
 function memoriserVue() {
-  try { localStorage.setItem('ma-cave-vue', JSON.stringify({ group: $('#group').value, sort: $('#sort').value })); } catch {}
+  try { localStorage.setItem('ma-cave-vue', JSON.stringify({ group: $('#group').value, sort: $('#sort').value, cru: $('#cru').value })); } catch {}
 }
 try {
   const vue = JSON.parse(localStorage.getItem('ma-cave-vue') || '{}');
   if (vue.group) $('#group').value = vue.group;
   if (vue.sort) $('#sort').value = vue.sort;
+  if (vue.cru) $('#cru').value = vue.cru;
 } catch {}
 $('#btnAdd').onclick = () => ouvrirFormulaire();
 
@@ -1033,7 +1177,7 @@ $('#lotPhotos').addEventListener('change', async (e) => {
       illisibles += res.nonIdentifiees || 0;
       for (const v of res.vins || []) {
         const vin = {
-          domaine: v.domaine || '', cuvee: v.cuvee || '', appellation: v.appellation || '',
+          domaine: v.domaine || '', cuvee: v.cuvee || '', appellation: v.appellation || '', classement: v.classement || '',
           millesime: Number(v.millesime) || null, couleur: v.couleur || '',
           nombre: Number(v.nombre) || 1, certitude: v.certitude || '', position: v.position || '',
           miniature, coche: true, etat: '',
@@ -1087,6 +1231,7 @@ $('#lotGo').onclick = async () => {
       domaine: fiche?.domaine || v.domaine,
       cuvee: fiche?.cuvee ?? v.cuvee,
       appellation: fiche?.appellation || v.appellation,
+      classement: fiche?.classement || v.classement || '',
       region: fiche?.region || '',
       millesime: v.millesime || Number(fiche?.millesime) || '',
       couleur: COULEURS.includes(fiche?.couleur) ? fiche.couleur : (COULEURS.includes(v.couleur) ? v.couleur : 'Rouge'),
@@ -1662,7 +1807,7 @@ async function majOnglets() {
 
 const fmtEur = (n) => (Number(n) || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-const nomVin = (d) => ([d.domaine, d.cuvee, d.appellation, d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom') + (d.format ? ` (${d.format})` : '');
+const nomVin = (d) => ([d.domaine, d.cuvee, d.appellation, d.classement && !sansAccent(d.appellation || '').toLowerCase().includes(sansAccent(d.classement).toLowerCase()) ? d.classement : '', d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom') + (d.format ? ` (${d.format})` : '');
 
 function statutGenerique(el, txt, erreur = false, enCours = false) {
   el.hidden = !txt;
@@ -2361,6 +2506,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
       prix: Math.max(0, Number(v.prix) || 0),
       data: {
         domaine: (v.domaine || '').trim(), cuvee: (v.cuvee || '').trim(), appellation: (v.appellation || '').trim(),
+        ...(v.classement ? { classement: v.classement } : {}),
         millesime: parseInt(v.millesime, 10) || '', couleur: COULEURS.includes(v.couleur) ? v.couleur : 'Rouge',
         ...(v.format && !/^75/.test(v.format) ? { format: v.format } : {}),
         ...(v.remarque ? { remarque: v.remarque } : {}),
@@ -2385,7 +2531,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
     let fiche = {};
     try { fiche = JSON.parse($('#formVin').dataset.fiche || '{}'); } catch {}
     // On garde la fiche trouvée (fenêtre de dégustation, accords…) pour l'ajout en cave
-    const extra = Object.fromEntries(['region', 'boireDe', 'boireA', ...CHAMPS_FICHE].map((k) => [k, fiche[k] ?? '']).filter(([, v]) => v !== ''));
+    const extra = Object.fromEntries(['region', 'classement', 'boireDe', 'boireA', ...CHAMPS_FICHE].map((k) => [k, fiche[k] ?? '']).filter(([, v]) => v !== ''));
     return actionCommande(() => jsonPost('/rest/v1/commande_vins', {
       commande_id: c.id, data: { ...extra, ...d }, prix: Math.max(0, Number($('#cv-prix').value) || 0),
     }));
@@ -2450,6 +2596,7 @@ async function integrerCommandesALaCave() {
         const d = v.data || {};
         const b = {
           domaine: d.domaine || '', cuvee: d.cuvee || '', appellation: d.appellation || '', region: d.region || '',
+          classement: d.classement || '',
           millesime: d.millesime || '', couleur: COULEURS.includes(d.couleur) ? d.couleur : 'Rouge',
           quantite: part.quantite, boireDe: d.boireDe || '', boireA: d.boireA || '',
           prix: Number(v.prix) || '', emplacement: '', notes: `${d.format ? 'Format ' + d.format + ' · ' : ''}Commande « ${c.titre} »${c.fournisseur ? ' chez ' + c.fournisseur : ''}${c.date_commande ? ' (' + fmtDate(c.date_commande) + ')' : ''}`,
