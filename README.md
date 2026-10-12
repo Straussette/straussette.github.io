@@ -75,4 +75,5 @@ supabase/functions/chercher-vin/index.ts    la fonction serveur (recherche, phot
 - La clé de l'API Claude est stockée dans les secrets Supabase, jamais dans le code.
 - Les recherches par IA ne sont accessibles qu'aux comptes validés par l'administrateur (table `membres`) ; chaque recherche est journalisée.
 - Toutes les données sont protégées par des règles d'accès (RLS) : chacun ne lit et ne modifie que sa cave, ses photos et ses recherches ; une commande groupée n'est visible que par ses participants.
-- Une limite de dépense mensuelle est fixée côté API Claude.
+- Chaque compte a un plafond mensuel de recherches IA (5 $ par défaut, réglable par l'administrateur) ; le coût réel de chaque recherche est calculé et journalisé.
+- Une limite de dépense mensuelle globale est aussi fixée côté API Claude.

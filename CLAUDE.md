@@ -41,7 +41,7 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 
   Les changements sont repérés grâce à une empreinte JSON par bouteille, conservée dans le localStorage sous `ma-cave-sync-<uid>`.
 - Supabase est appelé directement avec `fetch`, via `sbFetch()` : REST `/rest/v1`, authentification `/auth/v1`, stockage `/storage/v1`. La bibliothèque supabase-js n'est pas utilisée. La session est conservée dans le localStorage sous `ma-cave-session` et renouvelée par `jeton()`. `SB_CLE` est la clé publique Supabase, sans danger dans la page.
-- Tables et RPC utilisées par l'app : `bouteilles`, `profils`, `admins`, `commandes`, `commande_vins`, `commande_participants`, `remboursements`, ainsi que les RPC `admin_comptes`, `admin_definir_membre` et `rejoindre_commande`.
+- Tables et RPC utilisées par l'app : `bouteilles`, `profils`, `admins`, `commandes`, `commande_vins`, `commande_participants`, `remboursements`, `partages`, `accords` (recherches d'accords mémorisées), ainsi que les RPC `admin_comptes`, `admin_depenses`, `admin_definir_membre`, `admin_definir_plafond`, `rejoindre_commande` et `lire_partage`.
 - Pour regrouper les bouteilles et éviter les doublons, un vin est identifié par `cleVin()` (domaine | cuvée | appellation | millésime | format, normalisés). Les noms de domaine passent par `nettoyerDomaine()`, `cleDomaine()` et `domaineCanonique()`, pour qu'un nouvel ajout reprenne l'écriture déjà présente dans la cave.
 - Fonctionnalités principales :
   - recherche d'un vin et identification par photo de l'étiquette ;
@@ -63,5 +63,6 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
   - `accord` : choix d'un vin de la cave pour un repas ;
   - `garde` : affinage de la fenêtre de dégustation.
 - Chaque traitement demande à Claude une réponse uniquement en JSON, lue par `extraireJSON()`. Si la forme du JSON change dans une consigne, il faut mettre à jour le code correspondant dans `index.html`, et inversement.
-- Chaque appel est noté dans la table `recherches`, consultée par l'écran d'administration. Un échec de cette écriture ne bloque rien.
+- Chaque appel est noté dans la table `recherches` avec son coût réel en dollars (`cout_usd`, calculé par `appelerClaude()` à partir de l'usage renvoyé par l'API et des tarifs `PRIX`). Un échec de cette écriture ne bloque rien.
+- Plafond par compte : `membres.plafond_usd` (5 $ par défaut, `null` = illimité). Avant chaque appel, la fonction compare la dépense du mois (`depense_mois()`) au plafond et répond 402 (`code: "PLAFOND"`) s'il est atteint. Si le modèle change, mettre à jour `PRIX`.
 - Le modèle utilisé est défini par la constante `MODELE`.

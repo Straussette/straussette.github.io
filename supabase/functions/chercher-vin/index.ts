@@ -171,8 +171,44 @@ function jetonDe(req: Request) {
   return jeton.split(".").length === 3 ? jeton : "";
 }
 
-// Note la recherche dans le journal (pour l'écran d'administration) ; une erreur ici ne bloque rien
-async function noterRecherche(req: Request, mode: string) {
+/* ---------- Coût des appels et plafond par compte ---------- */
+// Tarifs Claude Sonnet 5.5 (USD) : 2 $ / M jetons en entrée, 10 $ / M en sortie, 10 $ / 1000 recherches web
+const PRIX = { entree: 2 / 1e6, sortie: 10 / 1e6, recherche: 10 / 1000 };
+type Compteur = { cout: number };
+
+async function appelerClaude(cle: string, corps: unknown, compteur: Compteur) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify(corps),
+  });
+  const data = await r.json();
+  const u = data?.usage ?? {};
+  compteur.cout += (u.input_tokens ?? 0) * PRIX.entree
+    + (u.cache_creation_input_tokens ?? 0) * PRIX.entree * 1.25
+    + (u.cache_read_input_tokens ?? 0) * PRIX.entree * 0.1
+    + (u.output_tokens ?? 0) * PRIX.sortie
+    + (u.server_tool_use?.web_search_requests ?? 0) * PRIX.recherche;
+  return { ok: r.ok, data };
+}
+
+// Dépense du mois en cours pour l'utilisateur (fonction SQL depense_mois, sous RLS)
+async function depenseMois(req: Request): Promise<number> {
+  const url = Deno.env.get("SUPABASE_URL");
+  try {
+    const r = await fetch(`${url}/rest/v1/rpc/depense_mois`, {
+      method: "POST",
+      headers: { apikey: cleSupabase(), Authorization: `Bearer ${jetonDe(req)}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    return r.ok ? Number(await r.json()) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Note la recherche et son coût dans le journal ; une erreur ici ne bloque rien
+async function noterRecherche(req: Request, mode: string, cout: number) {
   const jeton = jetonDe(req);
   const url = Deno.env.get("SUPABASE_URL");
   if (!jeton || !url) return;
@@ -180,29 +216,32 @@ async function noterRecherche(req: Request, mode: string) {
     await fetch(`${url}/rest/v1/recherches`, {
       method: "POST",
       headers: { apikey: cleSupabase(), Authorization: `Bearer ${jeton}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ mode, cout_usd: Math.round(cout * 1e5) / 1e5 }),
     });
   } catch { /* sans importance */ }
 }
 
 // Vérifie que la requête vient d'un utilisateur connecté inscrit dans la table « membres »
-async function estMembre(req: Request): Promise<boolean> {
+// et renvoie son plafond mensuel (null = illimité), ou null s'il n'est pas membre
+async function lireMembre(req: Request): Promise<{ plafond: number | null } | null> {
   const jeton = jetonDe(req);
-  if (!jeton) return false;
+  if (!jeton) return null;
   const url = Deno.env.get("SUPABASE_URL");
   const cle = cleSupabase();
-  if (!url || !cle) return false;
+  if (!url || !cle) return null;
   try {
     // La table membres n'est lisible que par l'utilisateur concerné (RLS) :
     // si la ligne revient, le jeton est valide ET l'utilisateur est membre.
-    const r = await fetch(`${url}/rest/v1/membres?select=user_id&limit=1`, {
+    const r = await fetch(`${url}/rest/v1/membres?select=plafond_usd&limit=1`, {
       headers: { apikey: cle, Authorization: `Bearer ${jeton}` },
     });
-    if (!r.ok) return false;
+    if (!r.ok) return null;
     const lignes = await r.json();
-    return Array.isArray(lignes) && lignes.length > 0;
+    if (!Array.isArray(lignes) || !lignes.length) return null;
+    const p = lignes[0].plafond_usd;
+    return { plafond: p === null || p === undefined ? null : Number(p) };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -210,6 +249,7 @@ async function extrairePropale(
   cle: string,
   piece: { type: "image" | "document" | "texte"; media_type?: string; data: string },
   cors: Record<string, string>,
+  compteur: Compteur,
 ) {
   const contenu: unknown[] = [];
   if (piece.type === "texte") {
@@ -219,13 +259,8 @@ async function extrairePropale(
     contenu.push({ type: "text", text: "Voici la proposition. Extrais les vins et leurs prix." });
   }
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: MODELE, max_tokens: 8000, system: CONSIGNE_PROPALE, messages: [{ role: "user", content: contenu }] }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
+    const { ok, data } = await appelerClaude(cle, { model: MODELE, max_tokens: 8000, system: CONSIGNE_PROPALE, messages: [{ role: "user", content: contenu }] }, compteur);
+    if (!ok) {
       console.error("Erreur API Anthropic", data);
       return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
     }
@@ -251,6 +286,7 @@ async function affinerGarde(
   vin: Record<string, unknown>,
   degustations: unknown[],
   cors: Record<string, string>,
+  compteur: Compteur,
 ) {
   const champ = (k: string) => String(vin[k] ?? "").slice(0, 120).trim();
   const description = [
@@ -270,17 +306,12 @@ async function affinerGarde(
   }];
   try {
     for (let tour = 0; tour < 4; tour++) {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-        body: JSON.stringify({
+      const { ok, data } = await appelerClaude(cle, {
           model: MODELE, max_tokens: 2500, system: CONSIGNE_GARDE, messages,
           tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6,
             user_location: { type: "approximate", country: "FR", timezone: "Europe/Paris" } }],
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok) {
+        }, compteur);
+      if (!ok) {
         console.error("Erreur API Anthropic", data);
         return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
       }
@@ -314,6 +345,7 @@ async function conseillerAccord(
   occasion: string,
   cave: unknown[],
   cors: Record<string, string>,
+  compteur: Compteur,
 ) {
   const lignes = cave.slice(0, 500).map((x) => {
     const v = x as Record<string, unknown>;
@@ -321,16 +353,11 @@ async function conseillerAccord(
   }).join("\n");
   const annee = new Date().getFullYear();
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
+    const { ok, data } = await appelerClaude(cle, {
         model: MODELE, max_tokens: 2500, system: CONSIGNE_ACCORD,
         messages: [{ role: "user", content: `Nous sommes en ${annee}.\nRepas : ${repas}\nOccasion : ${occasion}\n\nMa cave (un vin par ligne) :\n${lignes}` }],
-      }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
+      }, compteur);
+    if (!ok) {
       console.error("Erreur API Anthropic", data);
       return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
     }
@@ -352,12 +379,10 @@ async function detecter(
   cle: string,
   image: { media_type: string; data: string },
   cors: Record<string, string>,
+  compteur: Compteur,
 ) {
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": cle, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
+    const { ok, data } = await appelerClaude(cle, {
         model: MODELE,
         max_tokens: 3000,
         system: CONSIGNE_DETECTION,
@@ -368,10 +393,8 @@ async function detecter(
             { type: "text", text: "Liste les vins visibles sur cette photo." },
           ],
         }],
-      }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
+      }, compteur);
+    if (!ok) {
       console.error("Erreur API Anthropic", data);
       return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
     }
@@ -408,7 +431,8 @@ Deno.serve(async (req) => {
   // Accès : soit un membre connecté (compte autorisé), soit le code d'accès
   const codeAttendu = Deno.env.get("CODE_ACCES");
   const codeOk = !!codeAttendu && (req.headers.get("x-code-acces") ?? "") === codeAttendu;
-  if (!codeOk && !(await estMembre(req))) {
+  const membre = codeOk ? null : await lireMembre(req);
+  if (!codeOk && !membre) {
     return reponse({ erreur: "Accès refusé : connectez-vous avec un compte autorisé", code: "CODE_INVALIDE" }, 401, cors);
   }
 
@@ -458,29 +482,41 @@ Deno.serve(async (req) => {
   } catch {
     return reponse({ erreur: "Requête invalide" }, 400, cors);
   }
-  await noterRecherche(req, mode === "rechercher" ? (image ? "photo" : "texte") : mode);
+  // Plafond de dépense mensuel du compte
+  if (membre && membre.plafond !== null) {
+    const depense = await depenseMois(req);
+    if (depense >= membre.plafond) {
+      const f = (x: number) => x.toFixed(2).replace(".", ",");
+      return reponse({
+        erreur: `plafond mensuel atteint (${f(depense)} $ utilisés sur ${f(membre.plafond)} $). Il se remet à zéro le 1er du mois.`,
+        code: "PLAFOND",
+      }, 402, cors);
+    }
+  }
 
+  const compteur: Compteur = { cout: 0 };
+  const traiter = async (): Promise<Response> => {
   if (mode === "accord") {
     if (repas.length < 2) return reponse({ erreur: "Dites ce que vous allez manger" }, 400, cors);
     if (!cave.length) return reponse({ erreur: "Votre cave est vide" }, 400, cors);
-    return await conseillerAccord(cle, repas, occasion, cave, cors);
+    return await conseillerAccord(cle, repas, occasion, cave, cors, compteur);
   }
 
   if (mode === "garde") {
     if (!vinGarde || !(vinGarde.domaine || vinGarde.appellation)) return reponse({ erreur: "Vin à préciser" }, 400, cors);
-    return await affinerGarde(cle, vinGarde, degustations, cors);
+    return await affinerGarde(cle, vinGarde, degustations, cors, compteur);
   }
 
   if (mode === "propale") {
-    if (pdf) return await extrairePropale(cle, { type: "document", media_type: "application/pdf", data: pdf }, cors);
-    if (image) return await extrairePropale(cle, { type: "image", ...image }, cors);
-    if (texteTableau.trim()) return await extrairePropale(cle, { type: "texte", data: texteTableau }, cors);
+    if (pdf) return await extrairePropale(cle, { type: "document", media_type: "application/pdf", data: pdf }, cors, compteur);
+    if (image) return await extrairePropale(cle, { type: "image", ...image }, cors, compteur);
+    if (texteTableau.trim()) return await extrairePropale(cle, { type: "texte", data: texteTableau }, cors, compteur);
     return reponse({ erreur: "Ajoutez une photo, un PDF ou un tableau" }, 400, cors);
   }
 
   if (mode === "detecter") {
     if (!image) return reponse({ erreur: "Photo manquante" }, 400, cors);
-    return await detecter(cle, image, cors);
+    return await detecter(cle, image, cors, compteur);
   }
 
   if (!image && requete.length < 3) return reponse({ erreur: "Décrivez le vin (domaine, appellation, millésime…) ou prenez l'étiquette en photo" }, 400, cors);
@@ -503,14 +539,7 @@ Deno.serve(async (req) => {
   try {
     // La recherche web peut demander plusieurs tours (stop_reason "pause_turn")
     for (let tour = 0; tour < 3; tour++) {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": cle,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
+      const { ok, data } = await appelerClaude(cle, {
           model: MODELE,
           max_tokens: 2000,
           system: CONSIGNE,
@@ -521,11 +550,8 @@ Deno.serve(async (req) => {
             max_uses: RECHERCHES_MAX,
             user_location: { type: "approximate", country: "FR", timezone: "Europe/Paris" },
           }],
-        }),
-      });
-
-      const data = await r.json();
-      if (!r.ok) {
+        }, compteur);
+      if (!ok) {
         console.error("Erreur API Anthropic", data);
         const msg = data?.error?.message ?? "Erreur du service d'IA";
         return reponse({ erreur: msg }, 502, cors);
@@ -550,4 +576,9 @@ Deno.serve(async (req) => {
     console.error(e);
     return reponse({ erreur: "Impossible de lire la réponse, réessayez." }, 500, cors);
   }
+  };
+
+  const resultat = await traiter();
+  await noterRecherche(req, mode === "rechercher" ? (image ? "photo" : "texte") : mode, compteur.cout);
+  return resultat;
 });

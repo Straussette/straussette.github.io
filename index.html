@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-10.14">
+<meta name="app-version" content="2026-10-12.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -2479,20 +2479,26 @@ function statutGenerique(el, txt, erreur = false, enCours = false) {
 /* =========================================================
    Administration
    ========================================================= */
-const COUT_RECHERCHE = 0.07; // estimation moyenne en euros
+const fmtUsd = (x) => (Math.round(Number(x || 0) * 100) / 100).toFixed(2).replace('.', ',') + ' $';
 
 async function chargerAdmin() {
   statutGenerique($('#adminStatut'), 'Chargement…', false, true);
   try {
-    const liste = await sbFetch('/rest/v1/rpc/admin_comptes', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-    });
+    const appel = (f) => sbFetch('/rest/v1/rpc/' + f, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const [liste, depenses] = await Promise.all([appel('admin_comptes'), appel('admin_depenses')]);
+    const parId = new Map((depenses || []).map((d) => [d.user_id, d]));
+    for (const u of liste) {
+      const d = parId.get(u.user_id) || {};
+      u.depense = Number(d.depense_mois || 0);
+      u.plafond = d.plafond_usd === null || d.plafond_usd === undefined ? null : Number(d.plafond_usd);
+    }
     const totalRech = liste.reduce((s, u) => s + Number(u.recherches_mois), 0);
+    const totalDep = liste.reduce((s, u) => s + u.depense, 0);
     const membres = liste.filter((u) => u.membre).length;
     const enAttente = liste.filter((u) => !u.membre && u.confirme).length;
     $('#adminResume').textContent = `${liste.length} compte${liste.length > 1 ? 's' : ''} · ${membres} membre${membres > 1 ? 's' : ''}`
       + (enAttente ? ` · ${enAttente} en attente` : '')
-      + ` · ${totalRech} recherche${totalRech > 1 ? 's' : ''} ce mois-ci (≈ ${fmtEur(totalRech * COUT_RECHERCHE)})`;
+      + ` · ${totalRech} recherche${totalRech > 1 ? 's' : ''} ce mois-ci (${fmtUsd(totalDep)})`;
     $('#listeAdmin').innerHTML = liste.map((u) => `
       <li class="carte-simple" style="cursor:default">
         <div class="ligne">
@@ -2504,7 +2510,9 @@ async function chargerAdmin() {
         </div>
         ${u.pseudo ? `<div class="petit">${esc(u.email)}</div>` : ''}
         <div class="petit">Inscrit le ${fmtDate(u.inscrit)}${u.derniere_connexion ? ' · vu le ' + fmtDate(u.derniere_connexion) : ''}</div>
-        <div class="petit">${u.nb_bouteilles} bouteille${u.nb_bouteilles > 1 ? 's' : ''} (${u.nb_vins} vin${u.nb_vins > 1 ? 's' : ''}) · ${u.recherches_mois} recherche${u.recherches_mois > 1 ? 's' : ''} ce mois-ci${u.recherches_mois ? ' (≈ ' + fmtEur(u.recherches_mois * COUT_RECHERCHE) + ')' : ''}</div>
+        <div class="petit">${u.nb_bouteilles} bouteille${u.nb_bouteilles > 1 ? 's' : ''} (${u.nb_vins} vin${u.nb_vins > 1 ? 's' : ''}) · ${u.recherches_mois} recherche${u.recherches_mois > 1 ? 's' : ''} ce mois-ci</div>
+        ${u.membre ? `<div class="petit">💳 Ce mois-ci : <strong>${fmtUsd(u.depense)}</strong> / ${u.plafond === null ? 'sans plafond' : 'plafond ' + fmtUsd(u.plafond)}${u.plafond !== null && u.depense >= u.plafond ? ' · <strong>bloqué</strong>' : ''}
+          <button type="button" class="link" data-plafond="${esc(u.user_id)}" data-actuel="${u.plafond === null ? '' : u.plafond}">Modifier</button></div>` : ''}
         ${u.admin ? '' : `<div><button class="btn ${u.membre ? 'secondary' : 'primary'} petit-btn" data-membre="${esc(u.user_id)}" data-actif="${u.membre ? '0' : '1'}">
           ${u.membre ? 'Retirer l\'accès à la recherche' : 'Autoriser la recherche'}</button></div>`}
       </li>`).join('');
@@ -2515,6 +2523,21 @@ async function chargerAdmin() {
 }
 $('#btnAdminRafraichir').onclick = chargerAdmin;
 $('#listeAdmin').addEventListener('click', async (e) => {
+  const pl = e.target.closest('[data-plafond]');
+  if (pl) {
+    const saisie = prompt('Plafond mensuel de recherches IA, en dollars (laisser vide = sans plafond) :', pl.dataset.actuel);
+    if (saisie === null) return;
+    const v = saisie.trim() === '' ? null : Number(saisie.replace(',', '.'));
+    if (v !== null && !(v >= 0)) return statutGenerique($('#adminStatut'), 'Montant invalide.', true);
+    try {
+      await sbFetch('/rest/v1/rpc/admin_definir_plafond', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cible: pl.dataset.plafond, plafond: v }),
+      });
+      await chargerAdmin();
+    } catch (err) { statutGenerique($('#adminStatut'), 'Échec : ' + err.message, true); }
+    return;
+  }
   const b = e.target.closest('[data-membre]');
   if (!b) return;
   b.disabled = true;
