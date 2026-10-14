@@ -11,6 +11,7 @@
 ### Remplir sa cave
 - **📷 Ajout par photo** : on photographie l'étiquette, l'app lit le domaine, la cuvée, l'appellation, le classement et le millésime, puis remplit la fiche toute seule.
 - **📸 Ajout en lot** : plusieurs bouteilles sur une même photo, plusieurs photos d'un coup. L'app repère chaque vin, regroupe les bouteilles identiques et propose une liste à valider.
+- **📄 Import d'une liste existante** : tableau Excel ou CSV, PDF, capture d'écran d'une autre app (Vivino, CellarTracker…) ou photo d'une liste écrite. L'app relit la liste (quantités, prix d'achat, emplacements compris) ; on vérifie puis on ajoute, avec ou sans recherche de fiche pour chaque vin.
 - **🔍 Fiche complète tirée d'internet** (site du domaine, guides, cavistes) : descriptif, cépages, accords mets-vins, conseils de service, fourchette de prix du marché.
 - **🍾 Formats** : bouteille, magnum, demi… (la valeur est ajustée au format).
 - **🏷️ Noms de domaines unifiés** : un même producteur n'apparaît qu'une fois, même si l'étiquette l'écrit différemment.

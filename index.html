@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-12.1">
+<meta name="app-version" content="2026-10-14.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -425,14 +425,23 @@
 <dialog id="dlgLot">
   <div class="lot">
     <h2>Ajout en lot</h2>
-    <p class="search-help">Placez 4 à 8 bouteilles debout, étiquettes bien visibles face à l'objectif. Vous pouvez ajouter plusieurs photos, une à une ou d'un coup.</p>
+    <p class="search-help"><strong>Des bouteilles sous la main ?</strong> Placez-en 4 à 8 debout, étiquettes face à l'objectif. Plusieurs photos possibles.</p>
     <label class="photo-pick">
       <input type="file" id="lotPhotos" accept="image/*" multiple hidden>
-      <span>📸 Prendre ou choisir des photos</span>
+      <span>📸 Photographier des bouteilles</span>
+    </label>
+    <p class="search-help"><strong>Votre cave est déjà listée ailleurs ?</strong> Tableau Excel ou CSV, PDF, capture d'écran d'une autre app (Vivino, CellarTracker…) ou photo d'une liste écrite.</p>
+    <label class="photo-pick" style="min-height:60px">
+      <input type="file" id="lotListe" accept="image/*,application/pdf,.pdf,.csv,text/csv,.xlsx,.xls,.ods,.txt" multiple hidden>
+      <span>📄 Importer une liste</span>
     </label>
     <p class="search-status" id="lotStatus" hidden></p>
     <div class="progress" id="lotProgress" hidden><div></div></div>
     <ul class="lot-list" id="lotList"></ul>
+    <label class="petit" id="lotFichesBloc" style="display:flex; gap:8px; align-items:flex-start" hidden>
+      <input type="checkbox" id="lotFiches" style="margin-top:3px">
+      <span id="lotFichesTxt"></span>
+    </label>
     <div class="actions">
       <button type="button" class="btn secondary" id="lotClose">Fermer</button>
       <span class="spacer"></span>
@@ -856,7 +865,7 @@ function afficher() {
   const vide = $('#empty');
   if (bottles.length === 0) {
     vide.hidden = false;
-    vide.textContent = 'Votre cave est vide. Ajoutez votre première bouteille avec le bouton ci-dessous.';
+    vide.textContent = 'Votre cave est vide. Ajoutez votre première bouteille avec le bouton ci-dessous, ou « 📸 En lot » pour photographier plusieurs bouteilles ou importer une liste que vous tenez déjà (Excel, PDF, capture d\'écran…).';
   } else if (items.length === 0) {
     vide.hidden = false;
     vide.textContent = filtre !== '__bus' && !bottles.some((b) => b.quantite > 0)
@@ -1717,6 +1726,29 @@ $('#btnAdd').onclick = () => { if (session) ouvrirFormulaire(); };
 /* ---------- Ajout en lot (plusieurs bouteilles par photo) ---------- */
 let lot = [];          // vins détectés, en attente de validation
 let lotOccupe = false; // détection ou ajout en cours
+let lotFiches = null;  // recherche des fiches : null = choix automatique selon le nombre de vins
+const COUT_FICHE = 0.07; // coût moyen d'une recherche de fiche, en dollars
+$('#lotFiches').addEventListener('change', (e) => { lotFiches = e.target.checked; });
+
+// Ajoute un vin lu (photo ou liste) à la liste à valider ; un vin déjà présent voit sa quantité augmenter
+function ajouterAuLot(vin) {
+  const deja = lot.find((x) => !x.etat && cleVin(x) === cleVin(vin));
+  if (deja) { deja.nombre += vin.nombre; return false; }
+  lot.push(vin);
+  return true;
+}
+
+// Ramène un format écrit librement à ceux du formulaire
+function formatNormalise(f) {
+  const t = sansAccent(f || '').toLowerCase();
+  if (/double magnum/.test(t)) return 'Double magnum';
+  if (/jeroboam|300|3 ?l/.test(t)) return 'Jéroboam';
+  if (/mathusalem|imperial|600|6 ?l/.test(t)) return 'Mathusalem';
+  if (/magnum|150|1[,.]5/.test(t)) return 'Magnum';
+  if (/demi|37|375|half/.test(t)) return 'Demi-bouteille';
+  if (/clavelin|62/.test(t)) return 'Clavelin';
+  return '';
+}
 
 function lotStatut(txt, erreur = false, enCours = false) {
   const el = $('#lotStatus');
@@ -1751,7 +1783,11 @@ function afficherLot() {
           ${v.cuvee ? `<span>${esc(v.cuvee)}</span>` : ''}
           ${v.certitude && v.certitude !== 'haute' ? `<span>Lecture ${esc(v.certitude)} — vérifiez</span>` : ''}
           ${v.position ? `<span>📍 ${esc(v.position)}</span>` : ''}
+          ${v.prix ? `<span>${esc(v.prix)} €</span>` : ''}
+          ${v.format ? `<span>${esc(v.format)}</span>` : ''}
+          ${v.emplacement ? `<span>📍 ${esc(v.emplacement)}</span>` : ''}
           ${v.etat === 'ok' ? '<span class="etat-ok">✓ ajouté</span>' : ''}
+          ${v.etat === 'liste' ? '<span class="etat-ok">✓ ajouté (sans fiche)</span>' : ''}
           ${v.etat === 'cours' ? '<span><span class="spin"></span>recherche…</span>' : ''}
           ${v.etat === 'err' ? '<span class="etat-err">ajouté sans fiche complète</span>' : ''}
         </div>
@@ -1760,6 +1796,11 @@ function afficherLot() {
 
   const choisis = lot.filter((v) => v.coche && !v.etat);
   const n = choisis.reduce((s, v) => s + v.nombre, 0);
+  // Recherche internet des fiches : utile, mais coûteuse sur une grosse liste
+  $('#lotFichesBloc').hidden = !choisis.length;
+  $('#lotFiches').disabled = lotOccupe;
+  $('#lotFiches').checked = lotFiches ?? choisis.length <= 25;
+  $('#lotFichesTxt').textContent = `Compléter chaque vin par une recherche internet (description, garde, accords, prix du marché) — environ ${fmtUsd(choisis.length * COUT_FICHE)} pour ${choisis.length} vin${choisis.length > 1 ? 's' : ''}. Sinon, les vins sont ajoutés tels quels et vous pourrez lancer 🔍 Rechercher plus tard, vin par vin.`;
   $('#lotGo').hidden = !choisis.length;
   $('#lotGo').disabled = lotOccupe;
   $('#lotGo').textContent = `Ajouter ${choisis.length} vin${choisis.length > 1 ? 's' : ''} (${n} bouteille${n > 1 ? 's' : ''})`;
@@ -1808,8 +1849,7 @@ $('#lotPhotos').addEventListener('change', async (e) => {
           miniature, coche: true, etat: '',
         };
         // Même vin déjà détecté sur une autre photo ? On additionne.
-        const deja = lot.find((x) => !x.etat && cleVin(x) === cleVin(vin));
-        if (deja) deja.nombre += vin.nombre; else { lot.push(vin); trouves++; }
+        if (ajouterAuLot(vin)) trouves++;
       }
     } catch (err) {
       echecs++;
@@ -1829,6 +1869,94 @@ $('#lotPhotos').addEventListener('change', async (e) => {
   }
 });
 
+// 1 bis) Import d'une liste existante (tableur, PDF, capture d'écran, photo d'une liste écrite)
+const LIGNES_PAR_MORCEAU = 50; // une grosse liste est lue en plusieurs morceaux
+
+async function morceauxDepuisFichier(f) {
+  const nom = (f.name || '').toLowerCase();
+  let feuilles = null; // [[nom, csv]]
+  if (/\.(xlsx|xls|ods)$/.test(nom)) {
+    const XLSX = await chargerXLSX();
+    const classeur = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    feuilles = classeur.SheetNames.map((n) => [n, XLSX.utils.sheet_to_csv(classeur.Sheets[n])]);
+  } else if (/\.(csv|txt)$/.test(nom) || f.type.startsWith('text/')) {
+    feuilles = [[f.name, await f.text()]];
+  }
+  if (!feuilles) return [await pieceDepuisFichier(f)]; // image ou PDF : lu d'un bloc
+  const morceaux = [];
+  for (const [n, csv] of feuilles) {
+    const lignes = csv.split(/\r?\n/).filter((l) => l.replace(/[,;\s"]/g, '').length);
+    if (!lignes.length) continue;
+    const [entete, ...corps] = lignes;
+    for (let i = 0; i < Math.max(1, corps.length); i += LIGNES_PAR_MORCEAU) {
+      morceaux.push({ texte: `--- Feuille « ${n} » ---\n` + [entete, ...corps.slice(i, i + LIGNES_PAR_MORCEAU)].join('\n') });
+    }
+  }
+  return morceaux;
+}
+
+$('#lotListe').addEventListener('change', async (e) => {
+  const fichiers = [...e.target.files];
+  e.target.value = '';
+  if (!fichiers.length || lotOccupe) return;
+  const code = codeAcces();
+  if (!code) return;
+  lotOccupe = true;
+  afficherLot();
+  let trouves = 0, echecs = 0, tronques = 0;
+  const remarques = [];
+  try {
+    lotStatut('Préparation de la liste…', false, true);
+    const morceaux = [];
+    for (const f of fichiers) {
+      try { morceaux.push(...await morceauxDepuisFichier(f)); }
+      catch (err) { echecs++; remarques.push(`${f.name} : ${err.message}`); }
+    }
+    let fait = 0;
+    const file = [...morceaux];
+    const lire = async (piece) => {
+      try {
+        const res = await appelerAPI({ mode: 'inventaire', ...piece }, code);
+        if (res.tronque) tronques++;
+        if (res.remarques) remarques.push(res.remarques);
+        for (const v of res.vins || []) {
+          if (!v.domaine && !v.appellation) continue;
+          const vin = {
+            domaine: domaineCanonique(v.domaine), cuvee: v.cuvee || '', appellation: nettoyerAppellation(v.appellation), classement: v.classement || '',
+            millesime: Number(v.millesime) || null, couleur: v.couleur || '', format: formatNormalise(v.format),
+            nombre: Number(v.nombre) || 1, certitude: v.certitude || '',
+            prix: Number(v.prix) || '', emplacement: v.emplacement || '', notes: v.notes || '',
+            boireDe: Number(v.boireDe) || '', boireA: Number(v.boireA) || '',
+            coche: true, etat: '',
+          };
+          if (ajouterAuLot(vin)) trouves++;
+        }
+      } catch (err) {
+        echecs++;
+        if (/plafond|code d'accès|autorisé/.test(err.message)) { file.length = 0; remarques.push(err.message); }
+      }
+      fait++;
+      lotStatut(`Lecture de la liste… ${fait} partie${fait > 1 ? 's' : ''} sur ${morceaux.length} (≈ 30 s chacune)`, false, true);
+      lotProgression(fait, morceaux.length);
+      afficherLot();
+    };
+    lotStatut(`Lecture de la liste… 0 partie sur ${morceaux.length} (≈ 30 s chacune)`, false, true);
+    lotProgression(0, morceaux.length);
+    // 2 lectures en parallèle
+    await Promise.all([1, 2].map(async () => { while (file.length) await lire(file.shift()); }));
+  } finally {
+    lotOccupe = false;
+    lotProgression(0, 0);
+    afficherLot();
+  }
+  const msg = [`${trouves} vin${trouves > 1 ? 's' : ''} trouvé${trouves > 1 ? 's' : ''} dans la liste.`];
+  if (tronques) msg.push('La liste était très longue : la fin a pu être coupée, vérifiez et réimportez la fin si besoin.');
+  if (echecs) msg.push(`${echecs} partie${echecs > 1 ? 's' : ''} n'a pas pu être lue.`);
+  if (remarques.length) msg.push('ℹ️ ' + remarques.join(' · '));
+  if (trouves) msg.push('Vérifiez la liste, corrigez si besoin, puis appuyez sur « Ajouter ».');
+  lotStatut(msg.join(' '), !trouves);
+});
+
 // 2) Recherche internet pour chaque vin retenu, puis ajout à la cave
 $('#lotGo').onclick = async () => {
   const choisis = lot.filter((v) => v.coche && !v.etat);
@@ -1836,21 +1964,24 @@ $('#lotGo').onclick = async () => {
   const code = codeAcces();
   if (!code) return;
 
+  const avecFiches = $('#lotFiches').checked;
   lotOccupe = true;
   let fait = 0, cumules = 0, incomplets = 0;
   const total = choisis.length;
-  lotStatut(`Recherche des fiches… 0 sur ${total}`, false, true);
+  lotStatut(avecFiches ? `Recherche des fiches… 0 sur ${total}` : 'Ajout à la cave…', false, true);
   lotProgression(0, total);
 
   const traiter = async (v) => {
     v.etat = 'cours';
     afficherLot();
     let fiche = null;
-    try {
-      const requete = [v.domaine, v.cuvee, v.appellation, v.millesime].filter(Boolean).join(' ');
-      const f = await appelerAPI({ requete }, code);
-      if (f.trouve) fiche = f;
-    } catch { /* on ajoute quand même le vin avec ce qui a été lu */ }
+    if (avecFiches) {
+      try {
+        const requete = [v.domaine, v.cuvee, v.appellation, v.millesime, v.format].filter(Boolean).join(' ');
+        const f = await appelerAPI({ requete }, code);
+        if (f.trouve) fiche = f;
+      } catch { /* on ajoute quand même le vin avec ce qui a été lu */ }
+    }
 
     const b = {
       domaine: domaineCanonique(fiche?.domaine || v.domaine),
@@ -1860,10 +1991,11 @@ $('#lotGo').onclick = async () => {
       region: fiche?.region || '',
       millesime: v.millesime || Number(fiche?.millesime) || '',
       couleur: COULEURS.includes(fiche?.couleur) ? fiche.couleur : (COULEURS.includes(v.couleur) ? v.couleur : 'Rouge'),
+      format: v.format || '',
       quantite: v.nombre,
-      boireDe: Number(fiche?.boireDe) || '',
-      boireA: Number(fiche?.boireA) || '',
-      prix: '', emplacement: '', notes: '',
+      boireDe: v.boireDe || Number(fiche?.boireDe) || '',
+      boireA: v.boireA || Number(fiche?.boireA) || '',
+      prix: v.prix || '', emplacement: v.emplacement || '', notes: v.notes || '',
       ...(fiche ? Object.fromEntries(CHAMPS_FICHE.map((k) => [k, fiche[k] ?? ''])) : {}),
     };
     const existant = bottles.find((x) => cleVin(x) === cleVin(b));
@@ -1873,10 +2005,10 @@ $('#lotGo').onclick = async () => {
     } else {
       bottles.push({ id: nouvelId(), ...b, photo: v.miniature || null, ajoute: Date.now() });
     }
-    if (!fiche) incomplets++;
-    v.etat = fiche ? 'ok' : 'err';
+    if (avecFiches && !fiche) incomplets++;
+    v.etat = fiche ? 'ok' : avecFiches ? 'err' : 'liste';
     fait++;
-    lotStatut(`Recherche des fiches… ${fait} sur ${total}`, false, true);
+    if (avecFiches) lotStatut(`Recherche des fiches… ${fait} sur ${total}`, false, true);
     lotProgression(fait, total);
     afficherLot();
   };
@@ -1895,6 +2027,7 @@ $('#lotGo').onclick = async () => {
   const msg = [`✓ ${total} vin${total > 1 ? 's' : ''} ajouté${total > 1 ? 's' : ''} à la cave.`];
   if (cumules) msg.push(`${cumules} déjà présent${cumules > 1 ? 's' : ''} : quantités additionnées.`);
   if (incomplets) msg.push(`${incomplets} sans fiche complète : ouvrez-le${incomplets > 1 ? 's' : ''} et relancez 🔍 Rechercher.`);
+  if (!avecFiches) msg.push('Ajoutés sans recherche internet : ouvrez un vin et lancez 🔍 Rechercher pour compléter sa fiche.');
   lotStatut(msg.join(' '), false);
 };
 
@@ -1902,6 +2035,7 @@ $('#btnLot').onclick = () => {
   if (!session) return;
   if (!lotOccupe) {
     lot = [];
+    lotFiches = null;
     lotStatut('');
     lotProgression(0, 0);
     afficherLot();

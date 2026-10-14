@@ -59,6 +59,7 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 - Le champ `mode` choisit la consigne et le traitement :
   - `rechercher` (par défaut) : texte ou photo d'étiquette, avec un nombre de recherches web limité par `RECHERCHES_MAX` ;
   - `detecter` : plusieurs bouteilles sur une même photo, sans recherche web ;
+  - `inventaire` : relecture d'une liste de vins existante (tableur découpé en morceaux de 50 lignes côté navigateur, PDF, capture d'écran, photo d'une liste) ;
   - `propale` : extraction des vins et des prix d'une offre (image, PDF ou texte de tableau) ;
   - `accord` : choix d'un vin de la cave pour un repas ;
   - `garde` : affinage de la fenêtre de dégustation.

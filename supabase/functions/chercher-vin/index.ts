@@ -100,6 +100,38 @@ Règles :
 - Complète la couleur et l'appellation d'après tes connaissances si c'est évident.
 - Ignore les lignes qui ne sont pas des vins (frais de port, totaux…).`;
 
+// Mode « inventaire » : relire une liste de vins existante (tableur, PDF, capture d'écran d'une autre app, liste écrite)
+const CONSIGNE_INVENTAIRE = `Tu es un sommelier expert et un assistant de saisie rigoureux. On te donne l'inventaire d'une cave à vin tenu ailleurs : tableau Excel/CSV converti en texte, PDF, capture d'écran d'une application (Vivino, CellarTracker, notes…) ou photo d'une liste écrite à la main.
+Extrais chaque vin avec le nombre de bouteilles. Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
+{
+  "vins": [
+    {
+      "domaine": "nom du domaine ou château",
+      "cuvee": "nom de la cuvée, ou chaîne vide",
+      "appellation": "appellation",
+      "classement": "Grand cru | Premier cru | Cru classé… ou chaîne vide",
+      "millesime": 2018,
+      "couleur": "une valeur parmi ${COULEURS.join(", ")}",
+      "format": "chaîne vide pour 75 cl, sinon Magnum | Demi-bouteille | Jéroboam…",
+      "nombre": 6,
+      "prix": 35,
+      "emplacement": "casier, étagère… ou chaîne vide",
+      "boireDe": 2024,
+      "boireA": 2032,
+      "notes": "autre info utile de la ligne (commentaire, note…) ou chaîne vide",
+      "certitude": "haute | moyenne | faible"
+    }
+  ],
+  "remarques": "ce qui n'a pas pu être lu ou interprété, ou chaîne vide"
+}
+Règles :
+- Une entrée par vin, millésime et format. Si le même vin apparaît sur plusieurs lignes, additionne les quantités.
+- nombre = bouteilles en stock (1 si la quantité n'est pas indiquée). Ignore les vins à 0 bouteille, marqués bus ou sortis.
+- prix = prix d'achat unitaire en euros s'il est indiqué, sinon null. boireDe/boireA = fenêtre de dégustation si elle est indiquée, sinon null. N'invente rien : millesime, prix, boireDe et boireA sont des nombres ou null.
+- Complète l'appellation et la couleur d'après tes connaissances quand c'est évident ; corrige les fautes d'orthographe manifestes des noms de domaines.
+- Ignore les lignes qui ne sont pas des vins (titres, totaux, spiritueux si clairement indiqués).
+- certitude = "faible" si l'écriture ou la ligne est difficile à lire.`;
+
 // Mode « garde » : recherche ciblée sur la fenêtre de dégustation d'un vin précis
 const CONSIGNE_GARDE = `Tu es un sommelier spécialiste du vieillissement des vins. Détermine la fenêtre de dégustation la plus précise possible pour CE vin, CE millésime et CE format.
 Méthode — cherche en priorité :
@@ -281,6 +313,45 @@ async function extrairePropale(
   }
 }
 
+async function lireInventaire(
+  cle: string,
+  piece: { type: "image" | "document" | "texte"; media_type?: string; data: string },
+  cors: Record<string, string>,
+  compteur: Compteur,
+) {
+  const contenu: unknown[] = [];
+  if (piece.type === "texte") {
+    contenu.push({ type: "text", text: "Voici l'inventaire (tableau converti en texte) :\n\n" + piece.data });
+  } else {
+    contenu.push({ type: piece.type, source: { type: "base64", media_type: piece.media_type, data: piece.data } });
+    contenu.push({ type: "text", text: "Voici l'inventaire. Extrais tous les vins et leurs quantités." });
+  }
+  try {
+    const { ok, data } = await appelerClaude(cle, { model: MODELE, max_tokens: 16000, system: CONSIGNE_INVENTAIRE, messages: [{ role: "user", content: contenu }] }, compteur);
+    if (!ok) {
+      console.error("Erreur API Anthropic", data);
+      return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
+    }
+    const texte = (data.content ?? [])
+      .filter((b: { type: string }) => b.type === "text")
+      .map((b: { text: string }) => b.text)
+      .join("\n");
+    const res = extraireJSON(texte);
+    const num = (x: unknown) => Number(x) > 0 ? Number(x) : null;
+    const vins = (Array.isArray(res.vins) ? res.vins : []).map((v: Record<string, unknown>) => ({
+      ...v,
+      couleur: COULEURS.includes(String(v.couleur)) ? v.couleur : "",
+      nombre: Math.max(1, Math.min(999, Math.round(Number(v.nombre)) || 1)),
+      millesime: num(v.millesime), prix: num(v.prix), boireDe: num(v.boireDe), boireA: num(v.boireA),
+    }));
+    const tronque = data.stop_reason === "max_tokens";
+    return reponse({ vins, remarques: res.remarques ?? "", tronque }, 200, cors);
+  } catch (e) {
+    console.error(e);
+    return reponse({ erreur: "Impossible de lire cette liste (trop longue ?). Essayez en plusieurs morceaux." }, 500, cors);
+  }
+}
+
 async function affinerGarde(
   cle: string,
   vin: Record<string, unknown>,
@@ -454,6 +525,7 @@ Deno.serve(async (req) => {
     requete = String(corps.requete ?? "").trim();
     if (corps.mode === "detecter") mode = "detecter";
     if (corps.mode === "propale") mode = "propale";
+    if (corps.mode === "inventaire") mode = "inventaire";
     if (corps.mode === "accord") {
       mode = "accord";
       repas = String(corps.repas ?? "").trim().slice(0, 500);
@@ -512,6 +584,13 @@ Deno.serve(async (req) => {
     if (image) return await extrairePropale(cle, { type: "image", ...image }, cors, compteur);
     if (texteTableau.trim()) return await extrairePropale(cle, { type: "texte", data: texteTableau }, cors, compteur);
     return reponse({ erreur: "Ajoutez une photo, un PDF ou un tableau" }, 400, cors);
+  }
+
+  if (mode === "inventaire") {
+    if (pdf) return await lireInventaire(cle, { type: "document", media_type: "application/pdf", data: pdf }, cors, compteur);
+    if (image) return await lireInventaire(cle, { type: "image", ...image }, cors, compteur);
+    if (texteTableau.trim()) return await lireInventaire(cle, { type: "texte", data: texteTableau }, cors, compteur);
+    return reponse({ erreur: "Ajoutez un tableau, un PDF ou une image de votre liste" }, 400, cors);
   }
 
   if (mode === "detecter") {
