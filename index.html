@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-15.3">
+<meta name="app-version" content="2026-10-15.4">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -1783,7 +1783,7 @@ function afficherLot() {
         </div>
         <div class="lot-meta">
           <div class="lot-qty">
-            <button type="button" data-act="moins" aria-label="Moins" ${lotOccupe ? 'disabled' : ''}>−</button>
+            <button type="button" data-act="moins" aria-label="Moins" ${lotOccupe || !v.nombre ? 'disabled' : ''}>−</button>
             <span>${v.nombre}</span>
             <button type="button" data-act="plus" aria-label="Plus" ${lotOccupe ? 'disabled' : ''}>+</button>
           </div>
@@ -1818,14 +1818,16 @@ $('#lotList').addEventListener('input', (e) => {
   const i = e.target.closest('.lot-item')?.dataset.i;
   if (!k || i === undefined) return;
   const v = lot[i];
-  if (k === 'coche') { v.coche = e.target.checked; afficherLot(); return; }
+  if (k === 'coche') { v.coche = e.target.checked; if (v.coche && !v.nombre) v.nombre = 1; afficherLot(); return; }
   v[k] = k === 'millesime' ? (parseInt(e.target.value, 10) || null) : e.target.value;
 });
 $('#lotList').addEventListener('click', (e) => {
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!act) return;
   const v = lot[e.target.closest('.lot-item').dataset.i];
-  v.nombre = Math.max(1, v.nombre + (act === 'plus' ? 1 : -1));
+  // À 0, le vin est retiré de l'ajout (décoché) ; « + » le remet
+  v.nombre = Math.max(0, v.nombre + (act === 'plus' ? 1 : -1));
+  v.coche = v.nombre > 0;
   afficherLot();
 });
 
