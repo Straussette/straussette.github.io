@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-14.1">
+<meta name="app-version" content="2026-10-15.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -407,6 +407,7 @@
     </div>
 
     <p class="search-status" id="compteStatut" hidden></p>
+    <button type="button" class="link" id="btnRenvoyer" hidden>📧 Renvoyer l'e-mail de confirmation</button>
 
     <div class="actions">
       <button type="button" class="btn secondary" id="compteFermer">Fermer</button>
@@ -2322,7 +2323,23 @@ function compteStatut(txt, erreur = false, enCours = false) {
   el.hidden = !txt;
   el.className = 'search-status' + (erreur ? ' err' : '');
   el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
+  $('#btnRenvoyer').hidden = true; // réaffiché seulement si l'adresse n'est pas confirmée
 }
+
+// Adresse jamais confirmée : on peut renvoyer le lien de confirmation
+$('#btnRenvoyer').onclick = async () => {
+  const email = $('#c-email').value.trim();
+  if (!/^\S+@\S+\.\S+$/.test(email)) return compteStatut('Indiquez votre adresse e-mail.', true);
+  try {
+    compteStatut('Envoi…', false, true);
+    await sbFetch('/auth/v1/resend?redirect_to=' + encodeURIComponent(adresseApp()), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'signup', email }),
+    }, false);
+    compteStatut('E-mail de confirmation renvoyé. Pensez à regarder dans les spams (surtout Yahoo et Hotmail), cliquez sur le lien, puis connectez-vous ici.');
+  } catch (e) {
+    compteStatut(messageErreur(e), true);
+  }
+};
 
 // Modes de la fenêtre : connexion, inscription, oubli (demande de lien), nouveau (choix du nouveau mot de passe), compte (connecté)
 let modeCompte = 'connexion';
@@ -2402,7 +2419,7 @@ const adresseApp = () => location.origin + location.pathname;
 
 function messageErreur(e) {
   const t = (e.message || '') + ' ' + (e.code || '');
-  if (/not.confirmed|email_not_confirmed/i.test(t)) return 'Adresse e-mail pas encore confirmée : cliquez sur le lien reçu par e-mail.';
+  if (/not.confirmed|email_not_confirmed/i.test(t)) return 'Adresse e-mail pas encore confirmée : cliquez sur le lien reçu par e-mail lors de l\'inscription (regardez aussi dans les spams), ou faites-le renvoyer ci-dessous.';
   if (/invalid login|invalid_credentials/i.test(t)) return 'E-mail ou mot de passe incorrect. Utilisez « Mot de passe oublié ? » si besoin.';
   if (/already registered|user_already_exists/i.test(t)) return 'Un compte existe déjà avec cet e-mail : connectez-vous.';
   if (/rate limit|over_email_send_rate_limit|too many/i.test(t)) return 'Trop d\'e-mails envoyés récemment. Réessayez dans une heure.';
@@ -2429,7 +2446,7 @@ async function validerCompte() {
       await sbFetch('/auth/v1/recover?redirect_to=' + encodeURIComponent(adresseApp()), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
       }, false);
-      compteStatut('E-mail envoyé (s\'il existe un compte à cette adresse). Ouvrez le lien qu\'il contient pour choisir un nouveau mot de passe.');
+      compteStatut('E-mail envoyé (s\'il existe un compte à cette adresse). Ouvrez le lien qu\'il contient pour choisir un nouveau mot de passe — regardez aussi dans les spams.');
       return;
     }
 
@@ -2456,7 +2473,7 @@ async function validerCompte() {
         $('#c-mdp').value = ''; $('#c-mdp2').value = '';
         modeCompte = 'connexion';
         afficherCompte();
-        compteStatut('Compte créé ! Ouvrez l\'e-mail de confirmation reçu, cliquez sur le lien, puis connectez-vous ici.');
+        compteStatut('Compte créé ! Ouvrez l\'e-mail de confirmation reçu (regardez aussi dans les spams), cliquez sur le lien, puis connectez-vous ici.');
         return;
       }
       ouvrirSession(r);
@@ -2475,6 +2492,7 @@ async function validerCompte() {
     await apresConnexion();
   } catch (e) {
     compteStatut(messageErreur(e), true);
+    if (/not.confirmed|email_not_confirmed/i.test((e.message || '') + ' ' + (e.code || ''))) $('#btnRenvoyer').hidden = false;
   }
 }
 
