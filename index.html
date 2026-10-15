@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-15.2">
+<meta name="app-version" content="2026-10-15.3">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -382,8 +382,7 @@
 </dialog>
 
 <div class="fabs" id="fabs">
-  <button class="fab" id="btnAdd">+ Ajouter une bouteille</button>
-  <button class="fab alt" id="btnLot" aria-label="Ajouter plusieurs bouteilles en photo">📸 En lot</button>
+  <button class="fab" id="btnAdd">+ Ajouter des bouteilles</button>
 </div>
 
 <dialog id="dlgCompte">
@@ -431,17 +430,18 @@
 
 <dialog id="dlgLot">
   <div class="lot">
-    <h2>Ajout en lot</h2>
-    <p class="search-help"><strong>Des bouteilles sous la main ?</strong> Placez-en 4 à 8 debout, étiquettes face à l'objectif. Plusieurs photos possibles.</p>
+    <h2>Ajouter des bouteilles</h2>
+    <p class="search-help"><strong>Des bouteilles sous la main ?</strong> Une seule ou jusqu'à 8 par photo, debout, étiquettes face à l'objectif. Plusieurs photos possibles.</p>
     <label class="photo-pick">
       <input type="file" id="lotPhotos" accept="image/*" multiple hidden>
-      <span>📸 Photographier des bouteilles</span>
+      <span>📸 Photographier</span>
     </label>
     <p class="search-help"><strong>Votre cave est déjà listée ailleurs ?</strong> Tableau Excel ou CSV, PDF, capture d'écran d'une autre app (Vivino, CellarTracker…) ou photo d'une liste écrite.</p>
     <label class="photo-pick" style="min-height:60px">
       <input type="file" id="lotListe" accept="image/*,application/pdf,.pdf,.csv,text/csv,.xlsx,.xls,.ods,.txt" multiple hidden>
       <span>📄 Importer une liste</span>
     </label>
+    <p class="search-help" style="margin:0">Ou <button type="button" class="link" id="lotMain">✍️ saisir un vin à la main</button></p>
     <p class="search-status" id="lotStatus" hidden></p>
     <div class="progress" id="lotProgress" hidden><div></div></div>
     <ul class="lot-list" id="lotList"></ul>
@@ -872,7 +872,7 @@ function afficher() {
   const vide = $('#empty');
   if (bottles.length === 0) {
     vide.hidden = false;
-    vide.textContent = 'Votre cave est vide. Ajoutez votre première bouteille avec le bouton ci-dessous, ou « 📸 En lot » pour photographier plusieurs bouteilles ou importer une liste que vous tenez déjà (Excel, PDF, capture d\'écran…).';
+    vide.textContent = 'Votre cave est vide. Touchez « + Ajouter des bouteilles » : photographiez une ou plusieurs bouteilles, ou importez une liste que vous tenez déjà (Excel, PDF, capture d\'écran…).';
   } else if (items.length === 0) {
     vide.hidden = false;
     vide.textContent = filtre !== '__bus' && !bottles.some((b) => b.quantite > 0)
@@ -1728,7 +1728,7 @@ try {
   if (vue.sort) $('#sort').value = vue.sort;
   if (vue.cru) $('#cru').value = vue.cru;
 } catch {}
-$('#btnAdd').onclick = () => { if (session) ouvrirFormulaire(); };
+$('#btnAdd').onclick = () => ouvrirAjout();
 
 /* ---------- Ajout en lot (plusieurs bouteilles par photo) ---------- */
 let lot = [];          // vins détectés, en attente de validation
@@ -1974,6 +1974,7 @@ $('#lotGo').onclick = async () => {
   const avecFiches = $('#lotFiches').checked;
   lotOccupe = true;
   let fait = 0, cumules = 0, incomplets = 0;
+  const ajoutes = [];
   const total = choisis.length;
   lotStatut(avecFiches ? `Recherche des fiches… 0 sur ${total}` : 'Ajout à la cave…', false, true);
   lotProgression(0, total);
@@ -2009,8 +2010,11 @@ $('#lotGo').onclick = async () => {
     if (existant) {
       existant.quantite += b.quantite;
       cumules++;
+      ajoutes.push(existant);
     } else {
-      bottles.push({ id: nouvelId(), ...b, photo: v.miniature || null, ajoute: Date.now() });
+      const nouveau = { id: nouvelId(), ...b, photo: v.miniature || null, ajoute: Date.now() };
+      bottles.push(nouveau);
+      ajoutes.push(nouveau);
     }
     if (avecFiches && !fiche) incomplets++;
     v.etat = fiche ? 'ok' : avecFiches ? 'err' : 'liste';
@@ -2036,9 +2040,16 @@ $('#lotGo').onclick = async () => {
   if (incomplets) msg.push(`${incomplets} sans fiche complète : ouvrez-le${incomplets > 1 ? 's' : ''} et relancez 🔍 Rechercher.`);
   if (!avecFiches) msg.push('Ajoutés sans recherche internet : ouvrez un vin et lancez 🔍 Rechercher pour compléter sa fiche.');
   lotStatut(msg.join(' '), false);
+  // Un seul vin : on ouvre directement sa fiche (pour compléter prix payé, emplacement…)
+  if (total === 1 && ajoutes[0] && lot.every((v) => v.etat || !v.coche)) {
+    $('#dlgLot').close();
+    toast(`✓ ${nomVin(ajoutes[0])} ajouté à la cave.`);
+    ouvrirVue(ajoutes[0]);
+  }
 };
 
-$('#btnLot').onclick = () => {
+// Bouton unique « + Ajouter des bouteilles » : photo (une ou plusieurs), liste, ou saisie à la main
+function ouvrirAjout() {
   if (!session) return;
   if (!lotOccupe) {
     lot = [];
@@ -2050,6 +2061,7 @@ $('#btnLot').onclick = () => {
   $('#dlgLot').showModal();
 };
 $('#lotClose').onclick = () => $('#dlgLot').close();
+$('#lotMain').onclick = () => { if (lotOccupe) return; $('#dlgLot').close(); ouvrirFormulaire(); };
 
 /* ---------- Sauvegarde / restauration ---------- */
 $('#btnExport').onclick = () => {
@@ -2513,7 +2525,7 @@ async function validerCompte() {
     afficherCompte();
     await premiereConnexion();
     compteStatut('✓ Votre cave est synchronisée.');
-    bienvenue(`Bienvenue${session?.user?.pseudo ? ' ' + session.user.pseudo : ''} ! ` + (bottles.length ? 'Votre cave est synchronisée.' : 'Ajoutez vos bouteilles avec « + Ajouter une bouteille » ou « 📸 En lot ».'));
+    bienvenue(`Bienvenue${session?.user?.pseudo ? ' ' + session.user.pseudo : ''} ! ` + (bottles.length ? 'Votre cave est synchronisée.' : 'Touchez « + Ajouter des bouteilles » pour remplir votre cave.'));
     await apresConnexion();
   } catch (e) {
     compteStatut(messageErreur(e), true);
@@ -2557,7 +2569,7 @@ async function traiterLienEmail() {
       compteStatut('✓ Adresse confirmée, vous êtes connecté. Récupération de votre cave…', false, true);
       await premiereConnexion();
       compteStatut('✓ Votre cave est synchronisée.');
-      bienvenue('✓ Adresse confirmée, bienvenue ! ' + (bottles.length ? 'Votre cave est synchronisée.' : 'Ajoutez vos bouteilles avec « + Ajouter une bouteille » ou « 📸 En lot ».'));
+      bienvenue('✓ Adresse confirmée, bienvenue ! ' + (bottles.length ? 'Votre cave est synchronisée.' : 'Touchez « + Ajouter des bouteilles » pour remplir votre cave.'));
       await apresConnexion();
     }
   } catch (e) {
