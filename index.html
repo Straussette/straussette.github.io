@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-15.1">
+<meta name="app-version" content="2026-10-15.2">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -273,6 +273,12 @@
     dialog { width:100%; max-width:100%; height:100dvh; max-height:100dvh; border-radius:0; margin:0; }
     form { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
   }
+  /* ---------- Message éphémère ---------- */
+  .toast { position:fixed; left:50%; bottom:calc(96px + env(safe-area-inset-bottom)); transform:translate(-50%, 12px);
+    background:var(--text); color:var(--bg); padding:12px 18px; border-radius:14px; box-shadow:var(--shadow);
+    z-index:1000; width:max-content; max-width:calc(100% - 32px); font-size:15px; line-height:1.35;
+    opacity:0; transition:opacity .25s, transform .25s; pointer-events:none; }
+  .toast.visible { opacity:1; transform:translate(-50%, 0); }
 </style>
 </head>
 <body>
@@ -2318,6 +2324,23 @@ async function premiereConnexion() {
 }
 
 /* ---------- Fenêtre « Mon compte » ---------- */
+// Petit message en bas de l'écran, qui disparaît tout seul
+function toast(txt, duree = 4500) {
+  let el = document.querySelector('.toast');
+  if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.textContent = txt;
+  requestAnimationFrame(() => el.classList.add('visible'));
+  clearTimeout(toast.minuterie);
+  toast.minuterie = setTimeout(() => el.classList.remove('visible'), duree);
+}
+
+// Après une connexion réussie : on ferme la fenêtre du compte et on montre la cave
+function bienvenue(message) {
+  if ($('#dlgCompte').open) $('#dlgCompte').close();
+  if (typeof changerVue === 'function') changerVue('cave');
+  toast(message);
+}
+
 function compteStatut(txt, erreur = false, enCours = false) {
   const el = $('#compteStatut');
   el.hidden = !txt;
@@ -2458,8 +2481,9 @@ async function validerCompte() {
       $('#c-mdp').value = ''; $('#c-mdp2').value = '';
       modeCompte = 'compte';
       afficherCompte();
-      compteStatut('✓ Mot de passe changé. Utilisez-le désormais sur tous vos appareils.');
+      compteStatut('Mot de passe changé. Récupération de votre cave…', false, true);
       await premiereConnexion();
+      bienvenue(`✓ Mot de passe changé${session?.user?.pseudo ? ', ' + session.user.pseudo : ''} ! Utilisez-le désormais sur tous vos appareils.`);
       await apresConnexion();
       return;
     }
@@ -2489,6 +2513,7 @@ async function validerCompte() {
     afficherCompte();
     await premiereConnexion();
     compteStatut('✓ Votre cave est synchronisée.');
+    bienvenue(`Bienvenue${session?.user?.pseudo ? ' ' + session.user.pseudo : ''} ! ` + (bottles.length ? 'Votre cave est synchronisée.' : 'Ajoutez vos bouteilles avec « + Ajouter une bouteille » ou « 📸 En lot ».'));
     await apresConnexion();
   } catch (e) {
     compteStatut(messageErreur(e), true);
@@ -2532,6 +2557,7 @@ async function traiterLienEmail() {
       compteStatut('✓ Adresse confirmée, vous êtes connecté. Récupération de votre cave…', false, true);
       await premiereConnexion();
       compteStatut('✓ Votre cave est synchronisée.');
+      bienvenue('✓ Adresse confirmée, bienvenue ! ' + (bottles.length ? 'Votre cave est synchronisée.' : 'Ajoutez vos bouteilles avec « + Ajouter une bouteille » ou « 📸 En lot ».'));
       await apresConnexion();
     }
   } catch (e) {
