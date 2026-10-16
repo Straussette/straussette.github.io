@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-15.4">
+<meta name="app-version" content="2026-10-16.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -667,6 +667,7 @@ function nettoyerDomaine(nom) {
   let t = String(nom || '').trim();
   t = t.replace(/\s*[(«\[][^)»\]]*[)»\]]/g, '');            // précisions entre parenthèses / guillemets
   t = t.replace(/,.*$/, '');                                       // « , Vosne-Romanée », « , anciennement … »
+  t = t.replace(/\.\s+[A-ZÀ-Ý][a-zà-ÿ]+\s+[a-zà-ÿ].*$/, '');        // phrase parasite : « …. Vous avez écrit … »
   t = t.replace(/\b(EARL|SCEA|GAEC|SARL|SAS|SA|GFA|SCV)\b\.?/gi, '');
   return t.replace(/\s{2,}/g, ' ').replace(/^[\s\-–,]+|[\s\-–,]+$/g, '').trim();
 }
@@ -1524,6 +1525,18 @@ window.addEventListener('hashchange', () => { if (/fiche=/.test(location.hash)) 
 let vueId = null;        // bouteille affichée en consultation
 let retourVue = null;    // après « Modifier », on revient sur la consultation
 
+const FORMATS_BOUTEILLE = ['', 'Demi-bouteille', 'Clavelin', 'Magnum', 'Double magnum', 'Jéroboam', 'Mathusalem'];
+
+// Même vin dans un autre format : fiche séparée (stock, prix payé et garde propres), descriptif repris
+function vinAutreFormat(b, format, nombre) {
+  const existant = bottles.find((x) => x !== b && cleVin(x) === cleVin({ ...b, format }));
+  if (existant) { existant.quantite += nombre; return existant; }
+  const { id, photo, photo_path, partageId, garde, degustations, ouvertures, prix, emplacement, ajoute, ...reste } = b;
+  const copie = { ...reste, id: nouvelId(), format, quantite: nombre, prix: '', emplacement: '', photo: null, ajoute: Date.now() };
+  bottles.push(copie);
+  return copie;
+}
+
 function ouvrirVue(b) {
   vueId = b.id;
   afficherVue();
@@ -1560,6 +1573,16 @@ function afficherVue(message = '', erreur = false, enCours = false) {
       <div class="petit" style="text-align:right">
         ${v ? `≈ ${fmtEuro(v)} / ${b.format ? esc(b.format.toLowerCase()) : 'bout.'}` : ''}${b.prix ? `<br>payé ${fmtEuro(b.prix)}` : ''}
       </div>
+    </div>
+    <div class="petit" style="margin-top:-4px">
+      <button type="button" class="link" data-vue="autreFormat">➕ J'en ai aussi en ${b.format ? 'un autre format' : 'magnum ou autre format'}</button>
+    </div>
+    <div class="vue-stock" id="autreFormatBloc" hidden style="flex-wrap:wrap; justify-content:flex-start">
+      <select id="af-format" aria-label="Format">
+        ${FORMATS_BOUTEILLE.filter((f) => f !== (b.format || '')).map((f) => `<option value="${esc(f)}">${esc(f || 'Bouteille (75 cl)')}</option>`).join('')}
+      </select>
+      <input id="af-qte" type="number" inputmode="numeric" min="1" value="1" style="width:70px" aria-label="Nombre">
+      <button type="button" class="btn primary petit-btn" data-vue="autreFormatOk">Ajouter</button>
     </div>
     ${b.quantite === 0 ? `<div class="petit">📖 Plus en cave — ce vin reste en mémoire.${(b.ouvertures || []).length ? ` Dernière bouteille ouverte le ${new Date(b.ouvertures.at(-1)).toLocaleDateString('fr-FR')}.` : ''}</div>`
       : (b.emplacement ? `<div class="petit">📍 ${esc(b.emplacement)}</div>` : '')}
@@ -1614,6 +1637,21 @@ $('#vueContenu').addEventListener('click', async (e) => {
     retourVue = b.id;
     $('#dlgVue').close();
     return ouvrirFormulaire(b);
+  }
+  if (act === 'autreFormat') {
+    const bloc = $('#autreFormatBloc');
+    bloc.hidden = !bloc.hidden;
+    if (!bloc.hidden && !b.format) $('#af-format').value = 'Magnum';
+    return;
+  }
+  if (act === 'autreFormatOk') {
+    const format = $('#af-format').value;
+    const n = Math.max(1, parseInt($('#af-qte').value, 10) || 1);
+    const copie = vinAutreFormat(b, format, n);
+    await enregistrer(); afficher();
+    vueId = copie.id;
+    afficherVue(`✓ ${n} ${format ? format.toLowerCase() : 'bouteille'}${n > 1 ? 's' : ''} ajouté${n > 1 ? 's' : ''}. Cette fiche est séparée de celle en ${b.format ? b.format.toLowerCase() : 'bouteille'}.`);
+    return;
   }
   if (act === 'plus' || act === 'moins') {
     if (act === 'plus') b.quantite += 1;
@@ -1781,6 +1819,9 @@ function afficherLot() {
           <input data-k="appellation" value="${esc(v.appellation)}" placeholder="Appellation" ${lotOccupe ? 'disabled' : ''}>
           <input data-k="millesime" type="number" inputmode="numeric" value="${esc(v.millesime ?? '')}" placeholder="Millésime" ${lotOccupe ? 'disabled' : ''}>
         </div>
+        <select data-k="format" aria-label="Format" ${lotOccupe ? 'disabled' : ''}>
+          ${FORMATS_BOUTEILLE.map((f) => `<option value="${esc(f)}" ${(v.format || '') === f ? 'selected' : ''}>${esc(f || 'Bouteille (75 cl)')}</option>`).join('')}
+        </select>
         <div class="lot-meta">
           <div class="lot-qty">
             <button type="button" data-act="moins" aria-label="Moins" ${lotOccupe || !v.nombre ? 'disabled' : ''}>−</button>
@@ -1791,7 +1832,6 @@ function afficherLot() {
           ${v.certitude && v.certitude !== 'haute' ? `<span>Lecture ${esc(v.certitude)} — vérifiez</span>` : ''}
           ${v.position ? `<span>📍 ${esc(v.position)}</span>` : ''}
           ${v.prix ? `<span>${esc(v.prix)} €</span>` : ''}
-          ${v.format ? `<span>${esc(v.format)}</span>` : ''}
           ${v.emplacement ? `<span>📍 ${esc(v.emplacement)}</span>` : ''}
           ${v.etat === 'ok' ? '<span class="etat-ok">✓ ajouté</span>' : ''}
           ${v.etat === 'liste' ? '<span class="etat-ok">✓ ajouté (sans fiche)</span>' : ''}
@@ -1813,6 +1853,11 @@ function afficherLot() {
   $('#lotGo').textContent = `Ajouter ${choisis.length} vin${choisis.length > 1 ? 's' : ''} (${n} bouteille${n > 1 ? 's' : ''})`;
 }
 
+$('#lotList').addEventListener('change', (e) => {
+  if (e.target.dataset.k !== 'format') return;
+  const v = lot[e.target.closest('.lot-item')?.dataset.i];
+  if (v) v.format = e.target.value;
+});
 $('#lotList').addEventListener('input', (e) => {
   const k = e.target.dataset.k;
   const i = e.target.closest('.lot-item')?.dataset.i;
@@ -1853,7 +1898,7 @@ $('#lotPhotos').addEventListener('change', async (e) => {
       for (const v of res.vins || []) {
         const vin = {
           domaine: domaineCanonique(v.domaine), cuvee: v.cuvee || '', appellation: nettoyerAppellation(v.appellation), classement: v.classement || '',
-          millesime: Number(v.millesime) || null, couleur: v.couleur || '',
+          millesime: Number(v.millesime) || null, couleur: v.couleur || '', format: formatNormalise(v.format),
           nombre: Number(v.nombre) || 1, certitude: v.certitude || '', position: v.position || '',
           miniature, coche: true, etat: '',
         };

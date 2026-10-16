@@ -45,7 +45,7 @@ Règles :
 
 // Mode « détecter » : repérer toutes les bouteilles d'une photo (sans recherche web)
 const CONSIGNE_DETECTION = `Tu es un sommelier expert. On te montre une photo contenant une ou plusieurs bouteilles de vin.
-Repère chaque bouteille dont l'étiquette est au moins partiellement lisible, lis son étiquette, et regroupe les bouteilles identiques (même domaine, cuvée, appellation et millésime).
+Repère chaque bouteille dont l'étiquette est au moins partiellement lisible, lis son étiquette, et regroupe les bouteilles identiques (même domaine, cuvée, appellation, millésime ET format).
 Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
 {
   "vins": [
@@ -56,6 +56,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
       "classement": "Grand cru | Premier cru | Cru classé… ou chaîne vide",
       "millesime": 2015,
       "couleur": "une valeur parmi ${COULEURS.join(", ")}",
+      "format": "chaîne vide pour une bouteille 75 cl, sinon Demi-bouteille | Magnum | Double magnum | Jéroboam…",
       "nombre": 2,
       "certitude": "haute | moyenne | faible",
       "position": "où elle est sur la photo, ex. 'à gauche', '3e en partant de la gauche'"
@@ -66,6 +67,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
 Règles :
 - millesime est un nombre, ou null s'il n'est pas visible (ne l'invente pas).
 - Complète l'appellation et la couleur d'après tes connaissances si l'étiquette ne les montre pas clairement.
+- Format : compare la taille des bouteilles entre elles et avec les objets autour. Un magnum (1,5 l) est nettement plus haut (environ 1,3 fois) et plus large qu'une bouteille 75 cl voisine ; une demi-bouteille est nettement plus petite. Tiens compte aussi d'une mention « Magnum » ou « 150 cl » sur l'étiquette ou la capsule. Deux bouteilles du même vin dans deux formats différents font deux entrées distinctes. Dans le doute, laisse format vide (75 cl).
 - nonIdentifiees = nombre de bouteilles visibles dont tu n'as pas pu lire l'étiquette.
 - S'il n'y a aucune bouteille de vin, renvoie {"vins": [], "nonIdentifiees": 0}.`;
 
