@@ -28,6 +28,7 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 - `index.html` est découpé en sections repérées par `/* ---------- Titre ---------- */`, côté CSS comme côté JS. Ajouter le code dans la section concernée, ou créer une nouvelle section dans le même style.
 - Les couleurs passent par des variables CSS définies sur `:root`, avec le mode sombre géré par `prefers-color-scheme` et `[data-theme]`. Utiliser les variables existantes (`--accent`, `--surface`, `--c-rouge`…) plutôt que des couleurs en dur.
 - Échapper les valeurs insérées dans le HTML généré avec `esc()`.
+- **Relecture systématique.** Après chaque modification du dépôt, et avant de pousser, faire relire les changements par l'agent `relecteur-cave` (`.claude/agents/relecteur-cave.md`). Corriger les problèmes qu'il signale, puis relancer la relecture jusqu'au verdict « Prêt à pousser ». Coller son dernier rapport dans la description de la PR, sous un titre `## Relecture (relecteur-cave)`. Mettre ce rapport à jour à chaque nouveau push sur la PR.
 
 ## Architecture
 
