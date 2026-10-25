@@ -29,6 +29,8 @@ Fais quelques recherches web ciblées (site du domaine, guides, critiques, cavis
   "boireA": 2040,
   "apogee": "courte phrase sur l'apogée, ex. 'apogée vers 2028-2035'",
   "description": "2 à 3 phrases : style, arômes, structure",
+  "domaineInfo": "4 à 6 phrases sur le domaine (pas sur ce vin) : histoire et famille, qui le dirige aujourd'hui, taille du vignoble et parcelles notables, viticulture (bio, biodynamie…) et vinification, style maison, cuvées phares et réputation",
+  "domaineSite": "URL du site officiel du domaine, ou chaîne vide",
   "accords": ["3 à 5 accords mets-vins précis"],
   "service": "température de service et carafage éventuel",
   "prixMin": 60,
@@ -40,8 +42,20 @@ Règles :
 - millesime, boireDe, boireA, prixMin, prixMax sont des nombres (ou null si inconnus). Les prix sont en euros, prix actuel du marché par bouteille 75 cl.
 - La fenêtre de dégustation (boireDe → boireA) s'appuie de préférence sur des critiques ou le domaine ; sinon estime-la d'après l'appellation, le style et la qualité du millésime, et mets confiance à "moyenne" ou "faible".
 - Si le millésime n'est pas précisé, raisonne sur le millésime le plus courant et mets millesime à null.
+- Pour domaineInfo, appuie-toi de préférence sur le site du domaine ou une fiche producteur (guides, importateurs, cavistes) ; n'invente rien : si tu sais peu de choses, dis-le en une phrase.
 - Si tu ne trouves pas le vin, renvoie {"trouve": false, "message": "explication courte"}.
 - Réponds en français.`;
+
+// Mode « domaine » : présentation d'un domaine (pour les vins déjà en cave sans cette information)
+const CONSIGNE_DOMAINE = `Tu es un sommelier expert. Présente le domaine viticole indiqué, à partir de quelques recherches web ciblées (site officiel, guides, importateurs, cavistes).
+Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour :
+{
+  "trouve": true,
+  "presentation": "4 à 6 phrases : histoire et famille, qui le dirige aujourd'hui, taille du vignoble et parcelles notables, viticulture (bio, biodynamie…) et vinification, style maison, cuvées phares et réputation",
+  "site": "URL du site officiel, ou chaîne vide",
+  "sources": ["URLs principales utilisées"]
+}
+Règles : n'invente rien ; si le domaine est introuvable, renvoie {"trouve": false, "message": "explication courte"}. Réponds en français.`;
 
 // Mode « détecter » : repérer toutes les bouteilles d'une photo (sans recherche web)
 const CONSIGNE_DETECTION = `Tu es un sommelier expert. On te montre une photo contenant une ou plusieurs bouteilles de vin.
@@ -354,6 +368,47 @@ async function lireInventaire(
   }
 }
 
+async function presenterDomaine(
+  cle: string,
+  vin: Record<string, unknown>,
+  cors: Record<string, string>,
+  compteur: Compteur,
+) {
+  const champ = (k: string) => String(vin[k] ?? "").slice(0, 120).trim();
+  const messages: unknown[] = [{
+    role: "user",
+    content: `Domaine : ${champ("domaine")}\nAppellation d'un de ses vins : ${champ("appellation") || "—"}\nRégion : ${champ("region") || "—"}`,
+  }];
+  try {
+    for (let tour = 0; tour < 3; tour++) {
+      const { ok, data } = await appelerClaude(cle, {
+          model: MODELE, max_tokens: 1500, system: CONSIGNE_DOMAINE, messages,
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3,
+            user_location: { type: "approximate", country: "FR", timezone: "Europe/Paris" } }],
+        }, compteur);
+      if (!ok) {
+        console.error("Erreur API Anthropic", data);
+        return reponse({ erreur: data?.error?.message ?? "Erreur du service d'IA" }, 502, cors);
+      }
+      if (data.stop_reason === "pause_turn") {
+        messages.push({ role: "assistant", content: data.content });
+        continue;
+      }
+      const texte = (data.content ?? [])
+        .filter((b: { type: string }) => b.type === "text")
+        .map((b: { text: string }) => b.text)
+        .join("\n");
+      const d = extraireJSON(texte);
+      d.sources = (Array.isArray(d.sources) ? d.sources : []).slice(0, 5);
+      return reponse(d, 200, cors);
+    }
+    return reponse({ erreur: "La recherche a pris trop de temps, réessayez." }, 504, cors);
+  } catch (e) {
+    console.error(e);
+    return reponse({ erreur: "Impossible de lire la réponse, réessayez." }, 500, cors);
+  }
+}
+
 async function affinerGarde(
   cle: string,
   vin: Record<string, unknown>,
@@ -528,6 +583,10 @@ Deno.serve(async (req) => {
     if (corps.mode === "detecter") mode = "detecter";
     if (corps.mode === "propale") mode = "propale";
     if (corps.mode === "inventaire") mode = "inventaire";
+    if (corps.mode === "domaine") {
+      mode = "domaine";
+      vinGarde = (corps.vin && typeof corps.vin === "object") ? corps.vin : null;
+    }
     if (corps.mode === "accord") {
       mode = "accord";
       repas = String(corps.repas ?? "").trim().slice(0, 500);
@@ -576,6 +635,11 @@ Deno.serve(async (req) => {
     return await conseillerAccord(cle, repas, occasion, cave, cors, compteur);
   }
 
+  if (mode === "domaine") {
+    if (!vinGarde || !vinGarde.domaine) return reponse({ erreur: "Domaine à préciser" }, 400, cors);
+    return await presenterDomaine(cle, vinGarde, cors, compteur);
+  }
+
   if (mode === "garde") {
     if (!vinGarde || !(vinGarde.domaine || vinGarde.appellation)) return reponse({ erreur: "Vin à préciser" }, 400, cors);
     return await affinerGarde(cle, vinGarde, degustations, cors, compteur);
@@ -622,7 +686,7 @@ Deno.serve(async (req) => {
     for (let tour = 0; tour < 3; tour++) {
       const { ok, data } = await appelerClaude(cle, {
           model: MODELE,
-          max_tokens: 2000,
+          max_tokens: 3000,
           system: CONSIGNE,
           messages,
           tools: [{

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-22.1">
+<meta name="app-version" content="2026-10-25.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -606,7 +606,7 @@
 const COULEURS = ['Rouge', 'Blanc', 'Rosé', 'Effervescent', 'Liquoreux'];
 const API_RECHERCHE = 'https://axioguzxjiowpyvqmobo.supabase.co/functions/v1/chercher-vin';
 // Informations trouvées par la recherche, gardées avec la bouteille
-const CHAMPS_FICHE = ['pays', 'cepages', 'apogee', 'description', 'accords', 'service', 'prixMin', 'prixMax', 'confiance', 'sources'];
+const CHAMPS_FICHE = ['pays', 'cepages', 'apogee', 'description', 'accords', 'service', 'prixMin', 'prixMax', 'confiance', 'sources', 'domaineInfo', 'domaineSite'];
 let ficheEnCours = null;
 const $ = (sel) => document.querySelector(sel);
 
@@ -983,7 +983,12 @@ function afficherFiche(f) {
   el.hidden = false;
 }
 
-function htmlFiche(f, { avecQuand = true } = {}) {
+function htmlDomaine(f) {
+  const site = /^https?:\/\//.test(f.domaineSite || '') ? f.domaineSite : '';
+  return `<p style="margin:0">${esc(f.domaineInfo)}</p>${site ? `<div class="petit"><a href="${esc(site)}" target="_blank" rel="noopener">Site du domaine</a></div>` : ''}`;
+}
+
+function htmlFiche(f, { avecQuand = true, avecDomaine = true } = {}) {
   const prix = f.prixMin && f.prixMax ? `${fmtEuro(f.prixMin)} – ${fmtEuro(f.prixMax)}` : (f.prixMin || f.prixMax ? fmtEuro(f.prixMin || f.prixMax) : '');
   const accords = Array.isArray(f.accords) ? f.accords : (f.accords ? [f.accords] : []);
   const sources = (Array.isArray(f.sources) ? f.sources : []).filter((u) => /^https?:\/\//.test(u)).slice(0, 4);
@@ -994,6 +999,7 @@ function htmlFiche(f, { avecQuand = true } = {}) {
       ${f.confiance ? `<span class="pill">Fiabilité : ${esc(f.confiance)}</span>` : ''}
     </div>
     <div><h3>Le vin</h3><p>${esc(f.description)}</p></div>
+    ${avecDomaine && f.domaineInfo ? `<div><h3>Le domaine</h3>${htmlDomaine(f)}</div>` : ''}
     ${avecQuand && f.apogee ? `<div><h3>Quand le boire</h3><p>${esc(f.apogee)}</p></div>` : ''}
     ${accords.length ? `<div><h3>Avec quoi</h3><ul>${accords.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
     ${f.service ? `<div><h3>Service</h3><p>${esc(f.service)}</p></div>` : ''}
@@ -1032,6 +1038,166 @@ async function appelerAPI(corps, code) {
   return f;
 }
 
+/* ---------- Catalogue partagé des fiches ---------- */
+// Une fiche trouvée par un membre sert à tous : même vin (domaine, cuvée, appellation, millésime)
+// → fiche reprise gratuitement, sans nouvelle recherche. Idem pour la présentation d'un domaine.
+const CHAMPS_CATALOGUE = ['region', 'pays', 'classement', 'couleur', 'boireDe', 'boireA', ...CHAMPS_FICHE];
+const sansMentions = (t) => norm(String(t || '').replace(/\(.*?\)/g, ''))
+  .replace(/\b(aoc|aop|igp|appellation|controlee|protegee|premier|1er|grand|cru|village|villages|rouge|blanc)\b/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+function cleCatalogue(v) {
+  const dom = cleDomaine(v.domaine);
+  const app = sansMentions(v.appellation);
+  if (!dom || !app) return null;
+  let cuv = sansMentions(v.cuvee);
+  if (app.includes(cuv)) cuv = ''; // « Mercurey (village) » n'est pas une cuvée
+  return `vin:${dom}|${cuv}|${app}|${Number(v.millesime) || 'nm'}`;
+}
+const cleCatalogueDomaine = (nom) => { const d = cleDomaine(nom); return d ? `domaine:${d}` : null; };
+
+// Deux écritures du même domaine ? « dubreuil » et « philippe arnaud dubreuil » : oui (mots inclus)
+function memeDomaine(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const A = a.split(' '), B = b.split(' ');
+  const [petit, grand] = A.length <= B.length ? [A, B] : [B, A];
+  return petit.some((m) => m.length >= 4) && petit.every((m) => grand.includes(m));
+}
+
+// Lit les lignes du catalogue dont la clé correspond à l'un des motifs (« * » = n'importe quoi)
+async function lireCatalogue(motifs) {
+  const lignes = [];
+  const uniques = [...new Set(motifs.filter(Boolean))];
+  if (!session) return lignes;
+  for (let i = 0; i < uniques.length; i += 15) {
+    const ou = uniques.slice(i, i + 15).map((m) => `cle.like.${m}`).join(',');
+    try {
+      lignes.push(...(await sbFetch(`/rest/v1/catalogue?select=cle,fiche&or=(${encodeURIComponent(ou)})`) || []));
+    } catch { /* hors ligne : on fera sans */ }
+  }
+  return lignes;
+}
+
+// Fiches de vins : même cuvée, appellation et millésime, domaine écrit pareil ou presque
+async function chercherFichesVins(vins) {
+  const res = new Map(); // cleCatalogue(v) -> fiche
+  const parSuffixe = new Map();
+  for (const v of vins) {
+    const cle = cleCatalogue(v);
+    if (!cle) continue;
+    const suffixe = cle.slice(cle.indexOf('|'));
+    if (!parSuffixe.has(suffixe)) parSuffixe.set(suffixe, []);
+    parSuffixe.get(suffixe).push(cle);
+  }
+  const lignes = await lireCatalogue([...parSuffixe.keys()].map((sfx) => 'vin:*' + sfx));
+  for (const [suffixe, cles] of parSuffixe) {
+    const candidats = lignes.filter((l) => l.cle.endsWith(suffixe) && l.fiche && l.fiche.description);
+    for (const cle of cles) {
+      const dom = cle.slice(4, cle.indexOf('|'));
+      const l = candidats.find((x) => x.cle === cle) || candidats.find((x) => memeDomaine(dom, x.cle.slice(4, x.cle.indexOf('|'))));
+      if (l) res.set(cle, l.fiche);
+    }
+  }
+  return res;
+}
+
+// Présentations de domaines, retrouvées même si le nom est écrit un peu différemment
+async function chercherDomaines(noms) {
+  const res = new Map(); // cleDomaine(nom) -> { presentation, site }
+  const doms = [...new Set(noms.map(cleDomaine).filter(Boolean))];
+  const motLong = (d) => d.split(' ').sort((a, b) => b.length - a.length)[0];
+  const lignes = await lireCatalogue(doms.map((d) => `domaine:*${motLong(d)}*`));
+  for (const d of doms) {
+    const l = lignes.find((x) => x.cle === 'domaine:' + d) || lignes.find((x) => memeDomaine(d, x.cle.slice(8)));
+    if (l && l.fiche && l.fiche.presentation) res.set(d, l.fiche);
+  }
+  return res;
+}
+
+// Publie des fiches (et la présentation de leur domaine) ; seuls les membres peuvent écrire
+async function publierCatalogue(vins, { remplacer = true } = {}) {
+  if (!session) return true;
+  const lignes = new Map();
+  for (const v of vins) {
+    if (!v) continue;
+    const cv = v.description ? cleCatalogue(v) : null; // une fiche de vin n'est partagée que si elle est complète
+    if (cv) lignes.set(cv, { cle: cv, fiche: Object.fromEntries(CHAMPS_CATALOGUE.filter((k) => v[k] !== undefined && v[k] !== '' && v[k] !== null).map((k) => [k, v[k]])) });
+    const cd = cleCatalogueDomaine(v.domaine);
+    if (cd && v.domaineInfo) lignes.set(cd, { cle: cd, fiche: { presentation: v.domaineInfo, site: v.domaineSite || '', nom: v.domaine } });
+  }
+  const tout = [...lignes.values()];
+  for (let i = 0; i < tout.length; i += 50) {
+    try {
+      await sbFetch('/rest/v1/catalogue?on_conflict=cle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Prefer: `resolution=${remplacer ? 'merge' : 'ignore'}-duplicates,return=minimal` },
+        body: JSON.stringify(tout.slice(i, i + 50)),
+      });
+    } catch (e) { return !(e.status === 401 || e.status === 403); }
+  }
+  return true;
+}
+
+// Remplit les champs vides d'un vin avec une fiche du catalogue
+function appliquerFiche(b, f) {
+  for (const k of CHAMPS_CATALOGUE) {
+    if (f[k] === undefined || f[k] === '' || f[k] === null) continue;
+    if (b[k] === undefined || b[k] === '' || b[k] === null) b[k] = f[k];
+  }
+}
+
+// Complète les vins sans fiche (ou sans présentation du domaine) à partir du catalogue, gratuitement
+async function completerDepuisCatalogue(liste = bottles) {
+  let n = 0;
+  const sansFiche = liste.filter((b) => !b.description);
+  const cat = await chercherFichesVins(sansFiche);
+  for (const b of sansFiche) {
+    const f = cat.get(cleCatalogue(b));
+    if (f && f.description) { appliquerFiche(b, f); n++; }
+  }
+  const sansDomaine = liste.filter((b) => !b.domaineInfo && b.domaine);
+  const doms = await chercherDomaines(sansDomaine.map((b) => b.domaine));
+  for (const b of sansDomaine) {
+    const d = doms.get(cleDomaine(b.domaine));
+    if (d && d.presentation) { b.domaineInfo = d.presentation; b.domaineSite = d.site || ''; n++; }
+  }
+  return n;
+}
+
+// En arrière-plan (à l'ouverture et après connexion) : fiches trouvées par d'autres membres, puis partage des siennes
+function completerEnFond() {
+  if (!session) return;
+  completerDepuisCatalogue()
+    .then(async (n) => { if (n) { await enregistrer(); afficher(); } await publierMesFiches(); })
+    .catch(() => {});
+}
+
+// Une fois par appareil : on verse au catalogue les fiches déjà présentes dans sa cave (sans écraser)
+async function publierMesFiches() {
+  if (!session) return;
+  const drapeau = 'ma-cave-catalogue-v1-' + session.user.id;
+  try { if (localStorage.getItem(drapeau)) return; } catch { return; }
+  const ok = await publierCatalogue(bottles.filter((b) => b.description), { remplacer: false });
+  if (ok) { try { localStorage.setItem(drapeau, '1'); } catch {} }
+}
+
+let catalogueProposeCle = null; // fiche reprise du catalogue : un 2e appui sur Rechercher relance une vraie recherche
+
+function remplirFormulaireFiche(f) {
+  const remplir = (k, v) => { if (v !== null && v !== undefined && v !== '') $('#f-' + k).value = v; };
+  if (f.domaine) remplir('domaine', domaineCanonique(f.domaine));
+  remplir('cuvee', f.cuvee);
+  if (f.appellation) remplir('appellation', nettoyerAppellation(f.appellation));
+  remplir('region', f.region);
+  remplir('millesime', f.millesime);
+  if (COULEURS.includes(f.couleur)) $('#f-couleur').value = f.couleur;
+  remplir('boireDe', f.boireDe);
+  remplir('boireA', f.boireA);
+  if (f.classement) $('#f-classement').value = [...$('#f-classement').options].some((o) => o.value === f.classement) ? f.classement : $('#f-classement').value;
+  ficheEnCours = Object.fromEntries(CHAMPS_FICHE.map((k) => [k, f[k] ?? '']));
+  afficherFiche(ficheEnCours);
+}
+
 async function rechercherVin() {
   if ($('#btnSearch').disabled) return; // une recherche est déjà en cours
   let requete = $('#q').value.trim();
@@ -1054,28 +1220,34 @@ async function rechercherVin() {
 
   const bouton = $('#btnSearch');
   bouton.disabled = true;
-  statutRecherche(image ? 'Lecture de l\'étiquette et recherche sur internet…' : 'Recherche en cours sur internet…', false, true);
   try {
+    // Sans photo : la fiche existe peut-être déjà dans le catalogue partagé (gratuit)
+    if (!image) {
+      const v = Object.fromEntries(['domaine', 'cuvee', 'appellation', 'millesime'].map((k) => [k, $('#f-' + k).value.trim()]));
+      const cle = cleCatalogue(v);
+      if (cle && cle !== catalogueProposeCle) {
+        statutRecherche('Recherche dans les fiches partagées…', false, true);
+        const f = (await chercherFichesVins([v])).get(cle);
+        if (f && f.description) {
+          const d = (await chercherDomaines([v.domaine])).get(cleDomaine(v.domaine));
+          remplirFormulaireFiche({ ...f, ...(d && d.presentation && !f.domaineInfo ? { domaineInfo: d.presentation, domaineSite: d.site || '' } : {}) });
+          catalogueProposeCle = cle;
+          statutRecherche('✓ Fiche reprise des fiches partagées (déjà recherchée par un membre, gratuit). Pour une nouvelle recherche sur internet, touchez à nouveau 🔍 Rechercher.');
+          return;
+        }
+      }
+    }
+    statutRecherche(image ? 'Lecture de l\'étiquette et recherche sur internet…' : 'Recherche en cours sur internet…', false, true);
     const f = await appelerAPI(image ? { requete, image } : { requete }, code);
     if (!f.trouve) {
       statutRecherche(f.message || 'Vin introuvable. Essayez une photo plus nette ou tapez quelques mots.', true);
       return;
     }
 
-    // Remplit le formulaire avec ce qui a été trouvé
-    const remplir = (k, v) => { if (v !== null && v !== undefined && v !== '') $('#f-' + k).value = v; };
-    remplir('domaine', domaineCanonique(f.domaine));
-    remplir('cuvee', f.cuvee);
-    remplir('appellation', nettoyerAppellation(f.appellation));
-    remplir('region', f.region);
-    remplir('millesime', f.millesime);
-    if (COULEURS.includes(f.couleur)) $('#f-couleur').value = f.couleur;
-    remplir('boireDe', f.boireDe);
-    remplir('boireA', f.boireA);
-    if (f.classement) $('#f-classement').value = [...$('#f-classement').options].some((o) => o.value === f.classement) ? f.classement : $('#f-classement').value;
-
-    ficheEnCours = Object.fromEntries(CHAMPS_FICHE.map((k) => [k, f[k] ?? '']));
-    afficherFiche(ficheEnCours);
+    // Remplit le formulaire avec ce qui a été trouvé, et partage la fiche avec les autres membres
+    remplirFormulaireFiche(f);
+    catalogueProposeCle = null;
+    publierCatalogue([{ ...f, domaine: domaineCanonique(f.domaine), appellation: nettoyerAppellation(f.appellation) }]);
     statutRecherche('✓ Fiche remplie. Vérifiez, choisissez le nombre de bouteilles, puis enregistrez.');
   } catch (err) {
     statutRecherche('La recherche a échoué : ' + err.message, true);
@@ -1412,7 +1584,7 @@ function boireUne(b) {
 /* ---------- Partage d'une fiche ---------- */
 // Ce qui est partagé : la fiche du vin et mes dégustations — jamais prix d'achat, emplacement, stock ni notes perso
 const CHAMPS_PARTAGE = ['domaine', 'cuvee', 'appellation', 'classement', 'region', 'pays', 'millesime', 'couleur', 'format',
-  'cepages', 'description', 'accords', 'service', 'apogee', 'boireDe', 'boireA', 'garde', 'degustations', 'prixMin', 'prixMax'];
+  'cepages', 'description', 'accords', 'service', 'apogee', 'boireDe', 'boireA', 'garde', 'degustations', 'prixMin', 'prixMax', 'domaineInfo', 'domaineSite'];
 
 function texteFiche(b) {
   const g = b.garde;
@@ -1555,6 +1727,9 @@ function afficherVue(message = '', erreur = false, enCours = false) {
   const sousTitre = [b.appellation, b.classement && !sansAccent(b.appellation || '').toLowerCase().includes(sansAccent(b.classement).toLowerCase()) ? b.classement : '', b.millesime || 'NM'].filter(Boolean).join(' · ');
   const degust = b.degustations || [];
   const aFiche = b.description || b.accords || b.service;
+  // Présentation du domaine : celle du vin, sinon celle d'un autre vin du même domaine dans la cave
+  const infoDomaine = b.domaineInfo ? b
+    : bottles.find((x) => x.domaineInfo && memeDomaine(cleDomaine(x.domaine), cleDomaine(b.domaine))) || null;
   el.innerHTML = `
     <div class="vue-tete">
       <div class="info">
@@ -1608,7 +1783,14 @@ function afficherVue(message = '', erreur = false, enCours = false) {
       ${degust.slice().reverse().map((x) => `<div class="petit" style="color:var(--text)">${new Date(x.date).toLocaleDateString('fr-FR')} · <strong>${esc(ETATS_DEGUST[x.etat] || x.etat)}</strong>${x.sur20 != null ? ` · <strong>${String(x.sur20).replace('.', ',')}/20</strong>` : ''}${x.note ? ' — ' + esc(x.note) : ''}</div>`).join('')}
     </section>` : ''}
 
-    ${aFiche ? `<section><h3>Fiche</h3><div class="fiche">${htmlFiche(b, { avecQuand: false })}</div></section>` : ''}
+    ${aFiche ? `<section><h3>Fiche</h3><div class="fiche">${htmlFiche(b, { avecQuand: false, avecDomaine: false })}</div></section>` : ''}
+
+    <section>
+      <h3>Le domaine</h3>
+      ${infoDomaine ? `<div class="fiche">${htmlDomaine(infoDomaine)}</div>`
+        : `<p class="petit" style="margin:0">Pas encore de présentation de ${esc(b.domaine || 'ce domaine')}.</p>
+           ${b.domaine ? '<div class="actions" style="margin:0"><button type="button" class="btn secondary petit-btn" data-vue="domaine">🏡 Découvrir le domaine</button></div>' : ''}`}
+    </section>
 
     ${b.notes ? `<section><h3>Mes notes</h3><p style="white-space:pre-wrap; margin:0">${esc(b.notes)}</p></section>` : ''}
 
@@ -1706,6 +1888,29 @@ $('#vueContenu').addEventListener('click', async (e) => {
     b.degustations = [...(b.degustations || []), { date: new Date().toISOString(), etat, note, ...(sur20 >= 0 && sur20 <= 20 ? { sur20 } : {}) }];
     await enregistrer(); afficher();
     return afficherVue('Dégustation notée. « 🎯 Mettre à jour la garde » en tiendra compte.');
+  }
+  if (act === 'domaine') {
+    const memes = bottles.filter((x) => memeDomaine(cleDomaine(x.domaine), cleDomaine(b.domaine)));
+    afficherVue('Recherche du domaine dans les fiches partagées…', false, true);
+    let d = (await chercherDomaines([b.domaine])).get(cleDomaine(b.domaine));
+    let gratuit = !!(d && d.presentation);
+    if (!gratuit) {
+      const code = codeAcces();
+      if (!code) return afficherVue('');
+      afficherVue('Recherche sur internet (site du domaine, guides, cavistes)… ≈ 20 s', false, true);
+      for (const x of document.querySelectorAll('#vueContenu button')) x.disabled = true;
+      try {
+        const r = await appelerAPI({ mode: 'domaine', vin: { domaine: b.domaine, appellation: b.appellation, region: b.region } }, code);
+        if (!r.trouve || !r.presentation) return afficherVue(r.message || 'Domaine introuvable.', true);
+        d = r;
+      } catch (err) {
+        return afficherVue('Échec : ' + err.message, true);
+      }
+    }
+    for (const x of memes) { x.domaineInfo = d.presentation; x.domaineSite = d.site || ''; }
+    await enregistrer(); afficher();
+    if (!gratuit) publierCatalogue([{ domaine: b.domaine, domaineInfo: d.presentation, domaineSite: d.site || '' }]);
+    return afficherVue(gratuit ? '✓ Présentation reprise des fiches partagées (gratuit).' : `✓ Présentation ajoutée${memes.length > 1 ? ` à vos ${memes.length} vins de ce domaine` : ''}, et partagée avec les autres membres.`);
   }
   if (act === 'garde') {
     const code = codeAcces();
@@ -2025,20 +2230,29 @@ $('#lotGo').onclick = async () => {
   let fait = 0, cumules = 0, incomplets = 0;
   const ajoutes = [];
   const total = choisis.length;
-  lotStatut(avecFiches ? `Recherche des fiches… 0 sur ${total}` : 'Ajout à la cave…', false, true);
+  lotStatut('Recherche dans les fiches partagées…', false, true);
   lotProgression(0, total);
+  // Fiches déjà trouvées par un membre : reprises gratuitement, même sans recherche internet
+  const catalogue = await chercherFichesVins(choisis);
+  let partagees = 0;
+  lotStatut(avecFiches ? `Recherche des fiches… 0 sur ${total}` : 'Ajout à la cave…', false, true);
 
   const traiter = async (v) => {
     v.etat = 'cours';
     afficherLot();
-    let fiche = null;
-    if (avecFiches) {
+    let fiche = catalogue.get(cleCatalogue(v)) || null;
+    if (fiche && fiche.description) partagees++;
+    else if (avecFiches) {
+      fiche = null;
       try {
         const requete = [v.domaine, v.cuvee, v.appellation, v.millesime, v.format].filter(Boolean).join(' ');
         const f = await appelerAPI({ requete }, code);
-        if (f.trouve) fiche = f;
+        if (f.trouve) {
+          fiche = f;
+          publierCatalogue([{ ...f, domaine: domaineCanonique(f.domaine), appellation: f.appellation || v.appellation, cuvee: f.cuvee ?? v.cuvee, millesime: v.millesime || f.millesime }]);
+        }
       } catch { /* on ajoute quand même le vin avec ce qui a été lu */ }
-    }
+    } else fiche = null;
 
     const b = {
       domaine: domaineCanonique(fiche?.domaine || v.domaine),
@@ -2079,12 +2293,14 @@ $('#lotGo').onclick = async () => {
     while (file.length) await traiter(file.shift());
   }));
 
+  await completerDepuisCatalogue(ajoutes); // présentation des domaines déjà connus
   await enregistrer();
   afficher();
   lotOccupe = false;
   lotProgression(0, 0);
   afficherLot();
   const msg = [`✓ ${total} vin${total > 1 ? 's' : ''} ajouté${total > 1 ? 's' : ''} à la cave.`];
+  if (partagees) msg.push(`${partagees} fiche${partagees > 1 ? 's' : ''} reprise${partagees > 1 ? 's' : ''} des fiches partagées (gratuit).`);
   if (cumules) msg.push(`${cumules} déjà présent${cumules > 1 ? 's' : ''} : quantités additionnées.`);
   if (incomplets) msg.push(`${incomplets} sans fiche complète : ouvrez-le${incomplets > 1 ? 's' : ''} et relancez 🔍 Rechercher.`);
   if (!avecFiches) msg.push('Ajoutés sans recherche internet : ouvrez un vin et lancez 🔍 Rechercher pour compléter sa fiche.');
@@ -3416,6 +3632,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
       $('#cv-millesime').value = f.millesime || ''; $('#cv-cuvee').value = f.cuvee || '';
       if (COULEURS.includes(f.couleur)) $('#cv-couleur').value = f.couleur;
       $('#formVin').dataset.fiche = JSON.stringify(f);
+      publierCatalogue([{ ...f, domaine: domaineCanonique(f.domaine), appellation: nettoyerAppellation(f.appellation) }]);
       statutGenerique($('#cv-statut'), '✓ Trouvé' + (f.prixMin ? ` (prix du marché ${fmtEur(f.prixMin)} – ${fmtEur(f.prixMax)})` : '') + '. Indiquez le prix payé puis « Ajouter ».');
     } catch (err) { statutGenerique($('#cv-statut'), 'Recherche impossible : ' + err.message, true); }
     return;
@@ -3495,6 +3712,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
 async function integrerCommandesALaCave() {
   let change = false;
   const ajoutees = [];
+  const nouvelles = [];
   for (const c of commandes) {
     const p = c.commande_participants.find((x) => x.user_id === moi());
     if (!p || c.statut !== 'recue') continue;
@@ -3532,7 +3750,9 @@ async function integrerCommandesALaCave() {
           if (!existant.prix) existant.prix = b.prix;
         } else {
           if (!jeSuisOrga && !p.recupere) { b.emplacement = `Chez ${nomPersonne(orga)} (à récupérer)`; b.aRecuperer = c.id; }
-          bottles.push({ id: nouvelId(), ...b, photo: null, ajoute: Date.now() });
+          const nb = { id: nouvelId(), ...b, photo: null, ajoute: Date.now() };
+          bottles.push(nb);
+          nouvelles.push(nb);
         }
       }
       ajoutees.push(c.titre);
@@ -3544,6 +3764,7 @@ async function integrerCommandesALaCave() {
     }
   }
   if (change) {
+    if (nouvelles.length) await completerDepuisCatalogue(nouvelles); // fiches déjà trouvées par un autre participant
     await enregistrer();
     afficher();
     if (ajoutees.length) cmdStatut(`✓ Bouteilles ajoutées à votre cave : ${ajoutees.join(', ')}.`);
@@ -3647,6 +3868,7 @@ $('#btnChangerPseudo').onclick = async () => {
 // Après connexion : commande en attente ? onglets à jour ?
 async function apresConnexion() {
   await assurerProfil();
+  completerEnFond();
   await majOnglets();
   let attente = null;
   try { attente = sessionStorage.getItem('ma-cave-commande-en-attente'); sessionStorage.removeItem('ma-cave-commande-en-attente'); } catch {}
@@ -3710,6 +3932,7 @@ document.addEventListener('touchstart', () => { if (!document.querySelector('dia
   if (/access_token|error_code/.test(location.hash)) await traiterLienEmail();
   else if (session) await synchroniser({ telecharger: true });
   if (session) await assurerProfil();
+  completerEnFond();
   await majOnglets();
   if (/fiche=/.test(location.hash)) await traiterLienFiche();
   else if (/commande=/.test(location.hash)) await traiterLienCommande();
