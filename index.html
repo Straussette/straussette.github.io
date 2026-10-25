@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-25.1">
+<meta name="app-version" content="2026-10-25.2">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -371,6 +371,7 @@
     <button class="btn secondary" id="btnAdminRafraichir">Actualiser</button>
   </div>
   <p class="petit" id="adminResume"></p>
+  <div class="carte-simple" id="adminDemandes" hidden style="cursor:default; margin-top:10px"></div>
   <p class="search-status" id="adminStatut" hidden></p>
   <ul class="liste-simple" id="listeAdmin" style="margin-top:12px"></ul>
 </section>
@@ -411,6 +412,7 @@
       <p>Connecté en tant que <strong id="c-qui"></strong>.</p>
       <p style="margin-top:6px">Pseudo : <strong id="c-monpseudo"></strong> <button type="button" class="link" id="btnChangerPseudo">Modifier</button></p>
       <p id="c-sync" style="margin-top:6px"></p>
+      <p class="petit" id="c-demandes" style="margin-top:6px" hidden></p>
     </div>
 
     <p class="search-status" id="compteStatut" hidden></p>
@@ -451,6 +453,7 @@
       <input type="checkbox" id="lotFiches" style="margin-top:3px; width:20px; height:20px">
       <span id="lotFichesTxt"></span>
     </label>
+    <button type="button" class="btn secondary" id="lotDemander" hidden></button>
     <div class="actions">
       <button type="button" class="btn secondary" id="lotClose">Fermer</button>
       <span class="spacer"></span>
@@ -1153,13 +1156,26 @@ async function completerDepuisCatalogue(liste = bottles) {
   const cat = await chercherFichesVins(sansFiche);
   for (const b of sansFiche) {
     const f = cat.get(cleCatalogue(b));
-    if (f && f.description) { appliquerFiche(b, f); n++; }
+    if (f && f.description) { appliquerFiche(b, f); delete b.demandeFiche; n++; }
   }
   const sansDomaine = liste.filter((b) => !b.domaineInfo && b.domaine);
   const doms = await chercherDomaines(sansDomaine.map((b) => b.domaine));
   for (const b of sansDomaine) {
     const d = doms.get(cleDomaine(b.domaine));
-    if (d && d.presentation) { b.domaineInfo = d.presentation; b.domaineSite = d.site || ''; n++; }
+    if (d && d.presentation) { b.domaineInfo = d.presentation; b.domaineSite = d.site || ''; delete b.demandeDomaine; n++; }
+  }
+  return n;
+}
+
+async function leverDemandesIntrouvables() {
+  if (!bottles.some((b) => b.demandeFiche || b.demandeDomaine)) return 0;
+  let lignes = [];
+  try { lignes = (await sbFetch(`/rest/v1/demandes?select=cle,type&statut=eq.introuvable&user_id=eq.${session.user.id}`)) || []; } catch { return 0; }
+  const cles = new Set(lignes.map((l) => l.cle));
+  let n = 0;
+  for (const b of bottles) {
+    if (b.demandeFiche && !b.description && cles.has(cleCatalogue(b))) { delete b.demandeFiche; n++; }
+    if (b.demandeDomaine && !b.domaineInfo && cles.has(cleCatalogueDomaine(b.domaine))) { delete b.demandeDomaine; n++; }
   }
   return n;
 }
@@ -1168,6 +1184,7 @@ async function completerDepuisCatalogue(liste = bottles) {
 function completerEnFond() {
   if (!session) return;
   completerDepuisCatalogue()
+    .then(async (n) => n + await leverDemandesIntrouvables())
     .then(async (n) => { if (n) { await enregistrer(); afficher(); } await publierMesFiches(); })
     .catch(() => {});
 }
@@ -1180,6 +1197,70 @@ async function publierMesFiches() {
   const ok = await publierCatalogue(bottles.filter((b) => b.description), { remplacer: false });
   if (ok) { try { localStorage.setItem(drapeau, '1'); } catch {} }
 }
+
+/* ---------- Demandes de recherche gratuites ---------- */
+// Au lieu d'une recherche payante, on peut demander la fiche (ou la présentation du domaine) :
+// les demandes sont traitées de temps en temps avec l'administrateur, puis versées au catalogue
+// partagé, et l'app les applique toute seule à l'ouverture suivante.
+const champsDemande = (b) => Object.fromEntries(['domaine', 'cuvee', 'appellation', 'classement', 'millesime', 'couleur', 'region', 'format']
+  .filter((k) => b[k] !== undefined && b[k] !== '' && b[k] !== null).map((k) => [k, b[k]]));
+
+async function demanderRecherches(liste, type) {
+  if (!session) throw new Error('connectez-vous pour faire une demande');
+  const lignes = new Map();
+  for (const b of liste) {
+    const cle = type === 'vin' ? cleCatalogue(b) : cleCatalogueDomaine(b.domaine);
+    if (cle && !lignes.has(cle)) lignes.set(cle, { type, cle, vin: champsDemande(b) });
+  }
+  // On ne redemande pas ce qui est déjà en attente
+  const deja = (await sbFetch(`/rest/v1/demandes?select=cle&statut=eq.attente&user_id=eq.${session.user.id}`)) || [];
+  for (const d of deja) lignes.delete(d.cle);
+  const tout = [...lignes.values()];
+  for (let i = 0; i < tout.length; i += 100) {
+    const paquet = tout.slice(i, i + 100);
+    try {
+      await jsonPost('/rest/v1/demandes', paquet);
+    } catch (e) {
+      if (!(e.status === 409 || e.code === '23505')) throw e;
+      // Une demande est arrivée entre-temps (autre appareil) : on envoie une par une en ignorant les doublons
+      for (const l of paquet) {
+        try { await jsonPost('/rest/v1/demandes', l); } catch (e2) { if (!(e2.status === 409 || e2.code === '23505')) throw e2; }
+      }
+    }
+  }
+  const maintenant = new Date().toISOString();
+  for (const b of liste) {
+    const cle = type === 'vin' ? cleCatalogue(b) : cleCatalogueDomaine(b.domaine);
+    if (!cle) continue;
+    if (type === 'vin') b.demandeFiche = maintenant; else b.demandeDomaine = maintenant;
+  }
+  await enregistrer();
+  return { envoyees: tout.length, impossibles: liste.filter((b) => !(type === 'vin' ? cleCatalogue(b) : cleCatalogueDomaine(b.domaine))).length };
+}
+
+// Vins de la cave sans fiche et pas encore demandés
+const vinsADemander = () => bottles.filter((b) => b.quantite > 0 && !b.description && !b.demandeFiche && cleCatalogue(b));
+
+function afficherDemandesCompte() {
+  const el = $('#c-demandes');
+  if (!el) return;
+  const n = vinsADemander().length;
+  const attente = bottles.filter((b) => b.demandeFiche && !b.description).length;
+  el.hidden = !n && !attente;
+  el.innerHTML = (attente ? `⏳ ${attente} fiche${attente > 1 ? 's' : ''} demandée${attente > 1 ? 's' : ''}, en attente. ` : '')
+    + (n ? `${n} vin${n > 1 ? 's' : ''} sans fiche. <button type="button" class="link" id="btnDemanderTout">🤝 Demander leurs fiches gratuitement</button>` : '');
+}
+document.addEventListener('click', async (e) => {
+  if (e.target.id !== 'btnDemanderTout') return;
+  const liste = vinsADemander();
+  if (!liste.length || !confirm(`Demander les fiches de ${liste.length} vin${liste.length > 1 ? 's' : ''} ?\nElles seront recherchées gratuitement, de temps en temps, puis ajoutées toutes seules à votre cave.`)) return;
+  try {
+    compteStatut('Envoi des demandes…', false, true);
+    const r = await demanderRecherches(liste, 'vin');
+    compteStatut(`✓ ${r.envoyees} demande${r.envoyees > 1 ? 's' : ''} envoyée${r.envoyees > 1 ? 's' : ''}. Les fiches arriveront dans votre cave sans rien faire.`);
+    afficher(); afficherDemandesCompte();
+  } catch (err) { compteStatut('Échec : ' + err.message, true); }
+});
 
 let catalogueProposeCle = null; // fiche reprise du catalogue : un 2e appui sur Rechercher relance une vraie recherche
 
@@ -1783,13 +1864,22 @@ function afficherVue(message = '', erreur = false, enCours = false) {
       ${degust.slice().reverse().map((x) => `<div class="petit" style="color:var(--text)">${new Date(x.date).toLocaleDateString('fr-FR')} · <strong>${esc(ETATS_DEGUST[x.etat] || x.etat)}</strong>${x.sur20 != null ? ` · <strong>${String(x.sur20).replace('.', ',')}/20</strong>` : ''}${x.note ? ' — ' + esc(x.note) : ''}</div>`).join('')}
     </section>` : ''}
 
-    ${aFiche ? `<section><h3>Fiche</h3><div class="fiche">${htmlFiche(b, { avecQuand: false, avecDomaine: false })}</div></section>` : ''}
+    ${aFiche ? `<section><h3>Fiche</h3><div class="fiche">${htmlFiche(b, { avecQuand: false, avecDomaine: false })}</div></section>`
+      : `<section><h3>Fiche</h3>
+        <p class="petit" style="margin:0">${b.demandeFiche ? `⏳ Fiche demandée le ${fmtDate(b.demandeFiche)} : elle s'ajoutera toute seule.` : 'Pas encore de description, d\'accords ni de prix du marché.'}</p>
+        <div class="actions" style="margin:0; flex-wrap:wrap">
+          ${!b.demandeFiche && cleCatalogue(b) ? '<button type="button" class="btn secondary petit-btn" data-vue="demanderFiche">🤝 Demander la fiche (gratuit)</button>' : ''}
+          <button type="button" class="link" data-vue="modifier">🔍 Rechercher tout de suite (≈ 0,07 $)</button>
+        </div></section>`}
 
     <section>
       <h3>Le domaine</h3>
       ${infoDomaine ? `<div class="fiche">${htmlDomaine(infoDomaine)}</div>`
         : `<p class="petit" style="margin:0">Pas encore de présentation de ${esc(b.domaine || 'ce domaine')}.</p>
-           ${b.domaine ? '<div class="actions" style="margin:0"><button type="button" class="btn secondary petit-btn" data-vue="domaine">🏡 Découvrir le domaine</button></div>' : ''}`}
+           ${b.domaine ? `<div class="actions" style="margin:0; flex-wrap:wrap">
+             ${b.demandeDomaine ? `<span class="petit">⏳ Présentation demandée le ${fmtDate(b.demandeDomaine)}.</span>`
+               : '<button type="button" class="btn secondary petit-btn" data-vue="demanderDomaine">🤝 Demander (gratuit)</button>'}
+             <button type="button" class="link" data-vue="domaine">🏡 Chercher tout de suite (≈ 0,04 $)</button></div>` : ''}`}
     </section>
 
     ${b.notes ? `<section><h3>Mes notes</h3><p style="white-space:pre-wrap; margin:0">${esc(b.notes)}</p></section>` : ''}
@@ -1889,6 +1979,16 @@ $('#vueContenu').addEventListener('click', async (e) => {
     await enregistrer(); afficher();
     return afficherVue('Dégustation notée. « 🎯 Mettre à jour la garde » en tiendra compte.');
   }
+  if (act === 'demanderFiche' || act === 'demanderDomaine') {
+    const type = act === 'demanderFiche' ? 'vin' : 'domaine';
+    const liste = type === 'vin' ? [b] : bottles.filter((x) => memeDomaine(cleDomaine(x.domaine), cleDomaine(b.domaine)));
+    try {
+      await demanderRecherches(liste, type);
+      afficher();
+      afficherVue(type === 'vin' ? '✓ Demande envoyée : la fiche sera recherchée gratuitement et s\'ajoutera toute seule.' : '✓ Demande envoyée : la présentation du domaine s\'ajoutera toute seule.');
+    } catch (err) { afficherVue('Échec : ' + err.message, true); }
+    return;
+  }
   if (act === 'domaine') {
     const memes = bottles.filter((x) => memeDomaine(cleDomaine(x.domaine), cleDomaine(b.domaine)));
     afficherVue('Recherche du domaine dans les fiches partagées…', false, true);
@@ -1979,6 +2079,7 @@ $('#btnAdd').onclick = () => ouvrirAjout();
 let lot = [];          // vins détectés, en attente de validation
 let lotOccupe = false; // détection ou ajout en cours
 let lotFiches = null;  // recherche des fiches : null = choix automatique selon le nombre de vins
+let lotSansFiche = []; // vins ajoutés sans fiche, qu'on peut demander gratuitement
 const COUT_FICHE = 0.07; // coût moyen d'une recherche de fiche, en dollars
 $('#lotFiches').addEventListener('change', (e) => { lotFiches = e.target.checked; });
 
@@ -2303,8 +2404,11 @@ $('#lotGo').onclick = async () => {
   if (partagees) msg.push(`${partagees} fiche${partagees > 1 ? 's' : ''} reprise${partagees > 1 ? 's' : ''} des fiches partagées (gratuit).`);
   if (cumules) msg.push(`${cumules} déjà présent${cumules > 1 ? 's' : ''} : quantités additionnées.`);
   if (incomplets) msg.push(`${incomplets} sans fiche complète : ouvrez-le${incomplets > 1 ? 's' : ''} et relancez 🔍 Rechercher.`);
-  if (!avecFiches) msg.push('Ajoutés sans recherche internet : ouvrez un vin et lancez 🔍 Rechercher pour compléter sa fiche.');
+  if (!avecFiches) msg.push('Ajoutés sans recherche internet.');
   lotStatut(msg.join(' '), false);
+  lotSansFiche = ajoutes.filter((x) => !x.description && !x.demandeFiche && cleCatalogue(x));
+  $('#lotDemander').hidden = !lotSansFiche.length;
+  $('#lotDemander').textContent = `🤝 Demander gratuitement les fiches de ces ${lotSansFiche.length} vin${lotSansFiche.length > 1 ? 's' : ''}`;
   // Un seul vin : on ouvre directement sa fiche (pour compléter prix payé, emplacement…)
   if (total === 1 && ajoutes[0] && lot.every((v) => v.etat || !v.coche)) {
     $('#dlgLot').close();
@@ -2319,6 +2423,7 @@ function ouvrirAjout() {
   if (!lotOccupe) {
     lot = [];
     lotFiches = null;
+    $('#lotDemander').hidden = true;
     lotStatut('');
     lotProgression(0, 0);
     afficherLot();
@@ -2326,6 +2431,15 @@ function ouvrirAjout() {
   $('#dlgLot').showModal();
 };
 $('#lotClose').onclick = () => $('#dlgLot').close();
+$('#lotDemander').onclick = async () => {
+  try {
+    lotStatut('Envoi des demandes…', false, true);
+    const r = await demanderRecherches(lotSansFiche, 'vin');
+    $('#lotDemander').hidden = true;
+    lotStatut(`✓ ${r.envoyees} demande${r.envoyees > 1 ? 's' : ''} envoyée${r.envoyees > 1 ? 's' : ''} : les fiches seront recherchées gratuitement et s'ajouteront toutes seules à votre cave.`);
+    afficher();
+  } catch (err) { lotStatut('Échec : ' + err.message, true); }
+};
 $('#lotMain').onclick = () => { if (lotOccupe) return; $('#dlgLot').close(); ouvrirFormulaire(); };
 
 /* ---------- Sauvegarde / restauration ---------- */
@@ -2703,6 +2817,7 @@ function afficherCompte(message) {
       '☁️': '☁️ Cave synchronisée avec votre compte.',
       '⚠️': '⚠️ Synchronisation impossible pour l\'instant (hors ligne ?). Vos changements sont gardés sur cet appareil et partiront plus tard.',
     }[etatSync] || '';
+    afficherDemandesCompte();
   }
   if (message) compteStatut(message, true);
 }
@@ -2936,6 +3051,27 @@ function statutGenerique(el, txt, erreur = false, enCours = false) {
    ========================================================= */
 const fmtUsd = (x) => (Math.round(Number(x || 0) * 100) / 100).toFixed(2).replace('.', ',') + ' $';
 
+// Demandes de recherche gratuites en attente, par membre
+async function afficherDemandesAdmin(comptes) {
+  const el = $('#adminDemandes');
+  let demandes = [];
+  try { demandes = (await sbFetch('/rest/v1/demandes?select=user_id,type,cree&statut=eq.attente&order=cree.asc&limit=2000')) || []; } catch {}
+  el.hidden = !demandes.length;
+  if (!demandes.length) return;
+  const nom = new Map(comptes.map((u) => [u.user_id, u.pseudo || u.email]));
+  const parPersonne = new Map();
+  for (const d of demandes) {
+    const x = parPersonne.get(d.user_id) || { vin: 0, domaine: 0 };
+    x[d.type]++;
+    parPersonne.set(d.user_id, x);
+  }
+  const vins = demandes.filter((d) => d.type === 'vin').length;
+  el.innerHTML = `<strong>📬 ${demandes.length} demande${demandes.length > 1 ? 's' : ''} de recherche gratuite en attente</strong>
+    <div class="petit">${vins} fiche${vins > 1 ? 's' : ''} de vin, ${demandes.length - vins} domaine${demandes.length - vins > 1 ? 's' : ''} · la plus ancienne du ${fmtDate(demandes[0].cree)}</div>
+    <div class="petit">${[...parPersonne].map(([id, x]) => `${esc(nom.get(id) || '?')} : ${x.vin + x.domaine}`).join(' · ')}</div>
+    <div class="petit" style="margin-top:4px">Pour les traiter, demandez à Claude de « traiter les demandes de recherche de Ma Cave ».</div>`;
+}
+
 async function chargerAdmin() {
   statutGenerique($('#adminStatut'), 'Chargement…', false, true);
   try {
@@ -2951,6 +3087,7 @@ async function chargerAdmin() {
     const totalDep = liste.reduce((s, u) => s + u.depense, 0);
     const membres = liste.filter((u) => u.membre).length;
     const enAttente = liste.filter((u) => !u.membre && u.confirme).length;
+    afficherDemandesAdmin(liste);
     $('#adminResume').textContent = `${liste.length} compte${liste.length > 1 ? 's' : ''} · ${membres} membre${membres > 1 ? 's' : ''}`
       + (enAttente ? ` · ${enAttente} en attente` : '')
       + ` · ${totalRech} recherche${totalRech > 1 ? 's' : ''} ce mois-ci (${fmtUsd(totalDep)})`;
