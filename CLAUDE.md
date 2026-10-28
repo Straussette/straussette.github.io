@@ -52,7 +52,7 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
   - page de consultation d'un vin ;
   - garde affinée ;
   - accord mets-vins (« Que boire avec mon repas ? ») ;
-  - historique des bouteilles ouvertes (onglet « Bus ») ;
+  - historique des bouteilles ouvertes : onglet « 🍾 Dégustées » (journal tiré de `ouvertures` de chaque vin, `afficherBues()`), pastille « 📖 Bus » pour les vins épuisés. Le « − » demande « bue » ou « simple correction » (`retirerUne()`) : seule une bouteille bue est notée dans `ouvertures` ;
   - commandes groupées (`commandes`) : lien de partage `#commande=…`, tailles de caisse, récapitulatif et export Excel, import d'une proposition de caviste ;
   - écran d'administration ;
   - sauvegarde et restauration au format JSON.

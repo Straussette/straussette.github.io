@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-25.3">
+<meta name="app-version" content="2026-10-28.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -298,6 +298,7 @@
 
 <nav class="onglets" id="onglets" hidden>
   <button data-vue="cave" aria-selected="true">🍷 Ma cave</button>
+  <button data-vue="bues" aria-selected="false">🍾 Dégustées</button>
   <button data-vue="commandes" aria-selected="false">📦 Commandes</button>
   <button data-vue="admin" aria-selected="false" hidden id="ongletAdmin">⚙️ Admin</button>
 </nav>
@@ -355,6 +356,25 @@
     <button class="link" id="btnVider" style="color:var(--passe)">Vider ma cave</button>
   </div>
 </main>
+
+<section class="wrap" id="vueBues" hidden style="padding:16px">
+  <div class="vue-titre"><h2>Bouteilles dégustées</h2></div>
+  <p class="petit" id="buesResume"></p>
+  <ul class="liste-simple" id="listeBues" style="margin-top:12px"></ul>
+  <p class="empty" id="buesVide" hidden>Aucune bouteille ouverte pour l'instant. Quand vous en buvez une (« − » puis « Je l'ai bue », ou « J'ouvre celle-ci » dans « Que boire ? »), elle s'ajoute ici.</p>
+</section>
+
+<dialog id="dlgMoins">
+  <div class="cmd">
+    <h2>Une bouteille en moins</h2>
+    <p class="petit" id="moinsVin" style="margin:0"></p>
+    <div style="display:grid; gap:8px; margin-top:12px">
+      <button type="button" class="btn primary" data-moins="bue">🍷 Je l'ai bue</button>
+      <button type="button" class="btn secondary" data-moins="correction">✏️ Simple correction du stock</button>
+    </div>
+    <p class="petit" style="margin:10px 0 0">Une bouteille bue est notée dans l'onglet « 🍾 Dégustées ». Une correction change seulement le stock.</p>
+  </div>
+</dialog>
 
 <section class="wrap" id="vueCommandes" hidden style="padding:16px">
   <div class="vue-titre">
@@ -896,6 +916,7 @@ function afficher() {
     + (valeur ? ` · valeur estimée ≈ ${fmtEuro(valeur)}` : '');
 
   afficherChips();
+  if ($('#vueBues') && !$('#vueBues').hidden) afficherBues();
 }
 
 // Clé de regroupement d'une bouteille (titre affiché + ordre des sections)
@@ -1655,7 +1676,27 @@ $('#ac-resultat').addEventListener('click', async (e) => {
 });
 
 /* ---------- Bouteilles ouvertes : on garde la mémoire ---------- */
-// Une bouteille bue : stock −1 et date notée. À 0, le vin reste en mémoire (onglet « Bus »).
+// « − » : bouteille bue (notée dans « Dégustées ») ou simple correction du stock
+function choisirMoins(b) {
+  return new Promise((ok) => {
+    const dlg = $('#dlgMoins');
+    let choix = null;
+    $('#moinsVin').textContent = nomVin(b);
+    const clic = (e) => { const c = e.target.closest('[data-moins]')?.dataset.moins; if (c) { choix = c; dlg.close(); } };
+    dlg.addEventListener('click', clic);
+    dlg.addEventListener('close', () => { dlg.removeEventListener('click', clic); ok(choix); }, { once: true });
+    dlg.showModal();
+  });
+}
+async function retirerUne(b) {
+  if (b.quantite <= 0) return null;
+  const c = await choisirMoins(b);
+  if (c === 'bue') boireUne(b);
+  else if (c === 'correction') b.quantite -= 1;
+  return c;
+}
+
+// Une bouteille bue : stock −1 et date notée (journal « 🍾 Dégustées »). À 0, le vin reste en mémoire (pastille « 📖 Bus »).
 function boireUne(b) {
   if (b.quantite <= 0) return false;
   b.quantite -= 1;
@@ -1929,11 +1970,13 @@ $('#vueContenu').addEventListener('click', async (e) => {
     return;
   }
   if (act === 'plus' || act === 'moins') {
+    let choix = null;
     if (act === 'plus') b.quantite += 1;
-    else boireUne(b);
+    else if (!(choix = await retirerUne(b))) return;
     await enregistrer(); afficher();
-    afficherVue(b.quantite === 0 && act === 'moins'
-      ? 'Dernière bouteille bue 🍷 Le vin reste en mémoire dans l\'onglet « 📖 Bus ». Notez vos impressions !' : '');
+    afficherVue(choix === 'correction' ? 'Stock corrigé.'
+      : choix === 'bue' && b.quantite === 0 ? 'Dernière bouteille bue 🍷 Le vin reste en mémoire (pastille « 📖 Bus ») et dans l\'onglet « 🍾 Dégustées ». Notez vos impressions !'
+      : choix === 'bue' ? '🍷 Bouteille notée dans « 🍾 Dégustées ». Notez vos impressions !' : '');
     return;
   }
   if (act === 'partagerTexte') {
@@ -2049,7 +2092,7 @@ $('#list').addEventListener('click', async (e) => {
 
   if (btn.dataset.act === 'edit') return ouvrirVue(b);
   if (btn.dataset.act === 'plus') b.quantite += 1;
-  if (btn.dataset.act === 'moins') boireUne(b);
+  if (btn.dataset.act === 'moins' && !(await retirerUne(b))) return;
   await enregistrer();
   afficher();
 });
@@ -3011,12 +3054,66 @@ document.addEventListener('visibilitychange', () => {
 let vueActive = 'cave';
 let estAdmin = false;
 
+/* ---------- Onglet « Dégustées » : journal des bouteilles ouvertes ---------- */
+function afficherBues() {
+  const lignes = bottles.flatMap((b) => (b.ouvertures || []).map((d, i) => ({ b, d, i })))
+    .sort((x, y) => new Date(y.d) - new Date(x.d));
+  $('#buesVide').hidden = lignes.length > 0;
+  const maintenant = new Date();
+  const total = (filtre) => {
+    const l = lignes.filter(filtre);
+    const v = l.reduce((s, x) => s + (valeurUnitaire(x.b) || 0), 0);
+    return `${l.length} bouteille${l.length > 1 ? 's' : ''}${v ? ` (≈ ${fmtEuro(v)})` : ''}`;
+  };
+  $('#buesResume').textContent = lignes.length
+    ? `Ce mois-ci : ${total((x) => new Date(x.d).getMonth() === maintenant.getMonth() && new Date(x.d).getFullYear() === maintenant.getFullYear())}`
+      + ` · cette année : ${total((x) => new Date(x.d).getFullYear() === maintenant.getFullYear())}`
+      + ` · en tout : ${lignes.length}`
+    : '';
+  let mois = '';
+  $('#listeBues').innerHTML = lignes.map(({ b, d, i }) => {
+    const date = new Date(d);
+    const m = date.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    const entete = m !== mois ? `<li class="group-h"><h3>${esc(m.charAt(0).toUpperCase() + m.slice(1))}</h3></li>` : '';
+    mois = m;
+    const jour = date.toDateString();
+    const degust = (b.degustations || []).find((x) => x.date && new Date(x.date).toDateString() === jour);
+    return entete + `
+      <li class="carte-simple" data-bue-id="${esc(b.id)}" data-bue-i="${i}">
+        <div class="ligne">
+          <strong>${esc(nomVin(b))}</strong>
+          <span class="petit">${esc(date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }))}</span>
+        </div>
+        ${degust ? `<div class="petit">📝 ${esc(ETATS_DEGUST[degust.etat] || degust.etat)}${degust.sur20 != null ? ` · ${esc(String(degust.sur20).replace('.', ','))}/20` : ''}${degust.note ? ' — ' + esc(degust.note) : ''}</div>` : ''}
+        <div class="petit"><button type="button" class="link" data-bue="retirer">✕ Ce n'était pas une bouteille bue</button></div>
+      </li>`;
+  }).join('');
+}
+$('#listeBues').addEventListener('click', async (e) => {
+  const li = e.target.closest('[data-bue-id]');
+  if (!li) return;
+  const act = e.target.closest('[data-bue]')?.dataset.bue || 'voir'; // toucher la carte ouvre la fiche
+  const b = bottles.find((x) => x.id === li.dataset.bueId);
+  if (!b) return;
+  if (act === 'voir') return ouvrirVue(b);
+  if (act === 'retirer') {
+    if (!confirm(`Retirer cette ligne du journal ?\n${nomVin(b)}\nLe stock ne change pas.`)) return;
+    b.ouvertures = (b.ouvertures || []).filter((_, k) => k !== Number(li.dataset.bueI));
+    if (!b.ouvertures.length) delete b.ouvertures;
+    await enregistrer();
+    afficher();
+    afficherBues();
+  }
+});
+
 function changerVue(v) {
   vueActive = v;
   for (const b of document.querySelectorAll('#onglets button')) b.setAttribute('aria-selected', String(b.dataset.vue === v));
   $('#vueCave').hidden = v !== 'cave' || !session;
   $('#fabs').hidden = v !== 'cave' || !session;
   $('#vueCommandes').hidden = v !== 'commandes';
+  $('#vueBues').hidden = v !== 'bues';
+  if (v === 'bues') afficherBues();
   $('#vueAdmin').hidden = v !== 'admin';
   if (v === 'commandes') chargerCommandes();
   if (v === 'admin') chargerAdmin();
