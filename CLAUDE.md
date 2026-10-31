@@ -6,9 +6,10 @@ Ce fichier guide Claude Code (claude.ai/code) lorsqu'il travaille sur le code de
 
 **Ma Cave** : application web de gestion de cave à vin, en français, installable comme une app. Elle est hébergée par GitHub Pages à l'adresse https://straussette.github.io. Le texte de l'interface, les noms dans le code, les commentaires et les messages de commit sont en français : il faut garder cette règle.
 
-Le dépôt contient deux fichiers :
+Le dépôt contient trois fichiers de code :
 - `index.html` : toute l'application côté navigateur (HTML + CSS + JavaScript sans framework, sans dépendance, sans étape de build).
 - `supabase/functions/chercher-vin/index.ts` : une fonction serveur Supabase (Deno) qui appelle l'API Claude.
+- `supabase/functions/ma-cave-mcp/index.ts` : le connecteur « Ma Cave » pour Claude (serveur MCP), qui n'appelle pas l'API Claude.
 
 Le schéma de la base, les règles d'accès (RLS), les fonctions RPC et les espaces de stockage sont configurés dans le projet Supabase et **ne sont pas** dans ce dépôt.
 
@@ -20,6 +21,7 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 - Vérifier la syntaxe du script intégré :
   `awk '/<script>/{f=1;next}/<\/script>/{f=0}f' index.html > /tmp/app.js && node --check /tmp/app.js`
 - Déployer l'app : pousser sur la branche par défaut. GitHub Pages publie `index.html`.
+- Déployer le connecteur : `supabase functions deploy ma-cave-mcp --no-verify-jwt`. Il utilise la clé secrète du projet (`SUPABASE_SECRET_KEYS`, sinon `SUPABASE_SERVICE_ROLE_KEY`), fournie automatiquement : pas de secret à ajouter.
 - Déployer la fonction : `supabase functions deploy chercher-vin`. Il faut la CLI Supabase et un accès au projet, ce qui n'est pas en place ici. Secrets : `ANTHROPIC_API_KEY`, et `CODE_ACCES` (facultatif).
 
 ## Conventions
@@ -42,7 +44,7 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 
   Les changements sont repérés grâce à une empreinte JSON par bouteille, conservée dans le localStorage sous `ma-cave-sync-<uid>`.
 - Supabase est appelé directement avec `fetch`, via `sbFetch()` : REST `/rest/v1`, authentification `/auth/v1`, stockage `/storage/v1`. La bibliothèque supabase-js n'est pas utilisée. La session est conservée dans le localStorage sous `ma-cave-session` et renouvelée par `jeton()`. `SB_CLE` est la clé publique Supabase, sans danger dans la page.
-- Tables et RPC utilisées par l'app : `bouteilles`, `profils`, `admins`, `commandes`, `commande_vins`, `commande_parts` (quantité de chaque participant par vin), `commande_participants`, `remboursements`, `partages`, `accords` (recherches d'accords mémorisées), `demandes` (file de demandes de recherche gratuites : chacun lit et ajoute les siennes, l'admin lit tout via `est_admin()`), `catalogue` (fiches de vins `vin:…` et présentations de domaines `domaine:…` partagées entre tous les comptes : lecture pour tous, écriture pour les membres), ainsi que les RPC `admin_comptes`, `admin_depenses`, `admin_definir_membre`, `admin_definir_plafond`, `rejoindre_commande` et `lire_partage`.
+- Tables et RPC utilisées par l'app : `bouteilles`, `profils`, `admins`, `commandes`, `commande_vins`, `commande_parts` (quantité de chaque participant par vin), `commande_participants`, `remboursements`, `partages`, `accords` (recherches d'accords mémorisées), `demandes` (file de demandes de recherche gratuites : chacun lit et ajoute les siennes, l'admin lit tout via `est_admin()`), `cles_connecteur` (clé personnelle du connecteur Claude : seule l'empreinte SHA-256 est gardée ; RLS sans règle, accès par les RPC `creer_cle_connecteur`, `supprimer_cle_connecteur`, `etat_cle_connecteur`), `catalogue` (fiches de vins `vin:…` et présentations de domaines `domaine:…` partagées entre tous les comptes : lecture pour tous, écriture pour les membres), ainsi que les RPC `admin_comptes`, `admin_depenses`, `admin_definir_membre`, `admin_definir_plafond`, `rejoindre_commande` et `lire_partage`.
 - Catalogue partagé : avant toute recherche payante, l'app cherche la fiche dans `catalogue` (`chercherFichesVins()`, `chercherDomaines()` ; clé `cleCatalogue()` = domaine | cuvée | appellation | millésime, sans le format ; un domaine écrit plus court est rapproché par `memeDomaine()`). Chaque fiche trouvée est publiée par `publierCatalogue()`. Au démarrage, `completerEnFond()` complète les vins sans fiche et verse une fois ses propres fiches au catalogue.
 - Demandes de recherche gratuites : table `demandes` (`type` = `vin` ou `domaine`, `cle` = la clé du catalogue calculée par l'app, `vin` = domaine, cuvée, appellation, millésime…, `statut` = `attente` / `faite` / `introuvable`). Un membre la remplit avec `demanderRecherches()` (fiche d'un vin, domaine, ou tous ses vins sans fiche depuis « Mon compte »), et l'app marque la bouteille avec `demandeFiche` / `demandeDomaine`. L'administrateur les traite avec Claude, sans passer par l'API : recherche web, insertion dans `catalogue` sous la clé exacte de la demande (fiche de vin : mêmes champs que `CHAMPS_CATALOGUE` ; domaine : `{presentation, site, nom}`), puis `statut = 'faite'` ou `'introuvable'`. `completerEnFond()` applique ensuite les fiches à l'ouverture de l'app.
 - Pour regrouper les bouteilles et éviter les doublons, un vin est identifié par `cleVin()` (domaine | cuvée | appellation | millésime | format, normalisés). Les noms de domaine passent par `nettoyerDomaine()`, `cleDomaine()` et `domaineCanonique()`, pour qu'un nouvel ajout reprenne l'écriture déjà présente dans la cave.
@@ -71,3 +73,12 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 - Chaque appel est noté dans la table `recherches` avec son coût réel en dollars (`cout_usd`, calculé par `appelerClaude()` à partir de l'usage renvoyé par l'API et des tarifs `PRIX`). Un échec de cette écriture ne bloque rien.
 - Plafond par compte : `membres.plafond_usd` (5 $ par défaut, `null` = illimité). Avant chaque appel, la fonction compare la dépense du mois (`depense_mois()`) au plafond et répond 402 (`code: "PLAFOND"`) s'il est atteint. Si le modèle change, mettre à jour `PRIX`.
 - Le modèle utilisé est défini par la constante `MODELE`.
+
+### Connecteur Claude (`ma-cave-mcp`)
+- Chaque utilisateur branche sa cave dans son propre Claude (« Mon compte » → « 🤖 Brancher mon Claude », section « Connecteur Claude » d'`index.html`). Les recherches passent par son abonnement Claude : rien n'est facturé sur la clé API du projet ni compté dans le plafond. Ne pas ajouter d'appel à l'API Claude dans ce connecteur.
+- Transport MCP HTTP « streamable » sans état : POST JSON-RPC, réponses JSON, pas de flux ni de session (GET → 405).
+- Authentification : l'adresse se termine par la clé personnelle `mc_<48 hex>` (`…/functions/v1/ma-cave-mcp/<clé>`), créée par `creer_cle_connecteur()`, affichée une seule fois, révocable. La fonction agit avec la clé secrète du projet : **chaque requête doit filtrer sur le `user_id` de la clé**.
+- Outils : `ma_cave`, `fiche_vin`, `vins_a_completer`, `enregistrer_fiche`, `enregistrer_domaine`, `enregistrer_garde`, `ouvrir_bouteille`, `noter_degustation`, `modifier_bouteille`, `ajouter_vins`, `degustees`. Les champs venant de Claude passent par `nettoyerFiche()` (types et longueurs).
+- Catalogue partagé : écriture réservée aux membres (`membres`), jamais par-dessus la fiche d'un autre auteur. Une fiche enregistrée clôt les `demandes` en attente de l'utilisateur pour la même clé.
+- Les fonctions de normalisation (`cleVin`, `nettoyerDomaine`, `cleDomaine`, `cleCatalogue`, `sansMentions`, `memeDomaine`, `statut`, `valeurUnitaire`…) sont copiées d'`index.html` : **toute modification de l'une doit être reportée dans l'autre**. Idem pour les formats de `ouvertures`, `degustations` et `garde`.
+- Synchro : les vins modifiés par le connecteur arrivent dans l'app par `recupererCompte()` (ouverture de l'app, retour sur l'onglet). Si un appareil a une modification locale non encore envoyée sur le même vin, c'est la sienne qui gagne (dernier écrit).

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-28.1">
+<meta name="app-version" content="2026-10-31.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -282,6 +282,12 @@
     z-index:1000; width:max-content; max-width:calc(100% - 32px); font-size:15px; line-height:1.35;
     opacity:0; transition:opacity .25s, transform .25s; pointer-events:none; }
   .toast.visible { opacity:1; transform:translate(-50%, 0); }
+
+  /* ---------- Connecteur Claude ---------- */
+  .etapes-claude { margin:0; padding-left:20px; display:grid; gap:6px; font-size:.92rem; line-height:1.45; }
+  .bloc-lien-claude { display:grid; gap:8px; }
+  .lien-claude { width:100%; font-family:ui-monospace, Menlo, monospace; font-size:.78rem; }
+  .exemples-claude { margin:0; padding-left:20px; font-size:.88rem; color:var(--muted); display:grid; gap:4px; }
 </style>
 </head>
 <body>
@@ -434,6 +440,7 @@
       <p style="margin-top:6px">Pseudo : <strong id="c-monpseudo"></strong> <button type="button" class="link" id="btnChangerPseudo">Modifier</button></p>
       <p id="c-sync" style="margin-top:6px"></p>
       <p class="petit" id="c-demandes" style="margin-top:6px" hidden></p>
+      <p style="margin-top:6px"><button type="button" class="link" id="btnBrancherClaude">🤖 Brancher mon Claude</button> <span class="petit">— votre Claude fait les recherches et gère votre cave, sur votre abonnement</span></p>
     </div>
 
     <p class="search-status" id="compteStatut" hidden></p>
@@ -451,6 +458,33 @@
       <button type="button" class="link" id="lienMode">Pas encore de compte ? Créer un compte</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="dlgClaude">
+  <div class="dlg-compte">
+    <h2>🤖 Brancher mon Claude</h2>
+    <p>Avec votre propre Claude (claude.ai, appli mobile ou ordinateur), vous pouvez lui parler de votre cave : « qu'est-ce que je bois ce soir avec un poulet rôti ? », « complète les fiches qui manquent », « présente-moi le domaine Dubreuil », « j'ai ouvert le Paulands, 16/20 ». Les recherches passent par votre abonnement Claude : elles ne comptent pas dans le plafond de l'app.</p>
+    <p class="petit" id="claudeEtat"></p>
+    <div class="bloc-lien-claude" id="claudeLienBloc" hidden>
+      <p><strong>Votre lien personnel</strong> (gardez-le pour vous : il donne accès à votre cave) :</p>
+      <input class="lien-claude" id="claudeLien" readonly>
+      <button type="button" class="btn primary" id="btnCopierLienClaude">Copier le lien</button>
+    </div>
+    <ol class="etapes-claude">
+      <li>Créez votre lien ci-dessous, puis copiez-le.</li>
+      <li>Sur <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener">claude.ai → Paramètres → Connecteurs</a> (depuis un navigateur), choisissez « Ajouter un connecteur personnalisé ».</li>
+      <li>Nom : <strong>Ma Cave</strong>. URL : collez votre lien. Pas besoin d'identifiant ni de secret. Validez avec « Ajouter ».</li>
+      <li>Dans une conversation, activez « Ma Cave » dans le menu des outils (bouton « + » ou réglages de la conversation). Il marche ensuite aussi sur l'appli mobile.</li>
+    </ol>
+    <p class="petit">Le compte Claude gratuit accepte un seul connecteur personnalisé. Les changements faits par Claude apparaissent dans l'app à sa prochaine ouverture.</p>
+    <p class="search-status" id="claudeStatut" hidden></p>
+    <div class="actions">
+      <button type="button" class="btn secondary" id="claudeFermer">Fermer</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn danger" id="btnCouperClaude" hidden>Couper l'accès</button>
+      <button type="button" class="btn primary" id="btnCreerLienClaude">Créer mon lien</button>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="dlgLot">
@@ -3047,6 +3081,62 @@ document.addEventListener('visibilitychange', () => {
     synchroniser({ telecharger: true }).then(() => chargerCommandes({ silencieux: true }));
   }
 });
+
+/* ---------- Connecteur Claude (« Brancher mon Claude ») ---------- */
+// L'utilisateur branche sa cave dans son propre Claude : un serveur MCP (fonction ma-cave-mcp)
+// reconnu par une clé personnelle placée dans l'adresse. Seule l'empreinte de la clé est gardée.
+const API_CONNECTEUR = 'https://axioguzxjiowpyvqmobo.supabase.co/functions/v1/ma-cave-mcp/';
+const rpcCompte = (f) => sbFetch('/rest/v1/rpc/' + f, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+const statutClaude = (txt, erreur = false, enCours = false) => statutGenerique($('#claudeStatut'), txt, erreur, enCours);
+
+async function ouvrirClaude() {
+  $('#claudeLienBloc').hidden = true;
+  $('#claudeLien').value = '';
+  statutClaude('');
+  $('#dlgClaude').showModal();
+  await majEtatClaude();
+}
+
+async function majEtatClaude() {
+  let etat = null;
+  try { etat = ((await rpcCompte('etat_cle_connecteur')) || [])[0] || null; }
+  catch { $('#claudeEtat').textContent = 'État du lien indisponible (hors ligne ?).'; return; }
+  const date = (d) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  $('#claudeEtat').textContent = etat
+    ? `✓ Lien créé le ${date(etat.cree)}${etat.utilise ? `, utilisé par Claude le ${date(etat.utilise)}` : ', pas encore utilisé par Claude'}. Le lien n'est affiché qu'une fois : si vous l'avez perdu, créez-en un nouveau (l'ancien cessera de marcher).`
+    : 'Aucun lien pour l\'instant.';
+  $('#btnCouperClaude').hidden = !etat;
+  $('#btnCreerLienClaude').textContent = etat ? 'Nouveau lien' : 'Créer mon lien';
+}
+
+$('#btnBrancherClaude').onclick = () => { $('#dlgCompte').close(); ouvrirClaude(); };
+$('#claudeFermer').onclick = () => $('#dlgClaude').close();
+$('#btnCreerLienClaude').onclick = async () => {
+  if (!$('#btnCouperClaude').hidden && !confirm('Créer un nouveau lien ?\nL\'ancien ne marchera plus : il faudra mettre à jour le connecteur dans Claude.')) return;
+  try {
+    statutClaude('Création du lien…', false, true);
+    const cle = await rpcCompte('creer_cle_connecteur');
+    if (!/^mc_[0-9a-f]{48}$/.test(cle || '')) throw new Error('réponse inattendue');
+    $('#claudeLien').value = API_CONNECTEUR + cle;
+    $('#claudeLienBloc').hidden = false;
+    statutClaude('✓ Lien créé. Copiez-le maintenant : il ne sera plus affiché ensuite.');
+    await majEtatClaude();
+  } catch (err) { statutClaude('Échec : ' + err.message, true); }
+};
+$('#btnCopierLienClaude').onclick = async () => {
+  const lien = $('#claudeLien').value;
+  try { await navigator.clipboard.writeText(lien); statutClaude('✓ Lien copié. Collez-le dans Claude (étapes ci-dessous).'); }
+  catch { $('#claudeLien').select(); statutClaude('Sélectionnez le lien et copiez-le à la main.'); }
+};
+$('#btnCouperClaude').onclick = async () => {
+  if (!confirm('Couper l\'accès de Claude à votre cave ?\nLe lien actuel cessera de marcher.')) return;
+  try {
+    await rpcCompte('supprimer_cle_connecteur');
+    $('#claudeLienBloc').hidden = true;
+    statutClaude('✓ Accès coupé. Vous pouvez aussi retirer le connecteur dans les réglages de Claude.');
+    await majEtatClaude();
+  } catch (err) { statutClaude('Échec : ' + err.message, true); }
+};
 
 /* =========================================================
    Onglets : Ma cave / Commandes / Admin

@@ -46,6 +46,11 @@
 - **🚚 Livraison** : reçue, puis « à récupérer » / « récupéré » pour chacun ; les bouteilles s'ajoutent automatiquement à la cave de chacun.
 - **📊 Récapitulatif** pour l'organisateur, exportable en CSV.
 
+### 🤖 Avec son propre Claude
+- **Connecteur « Ma Cave »** : depuis « Mon compte » → « Brancher mon Claude », chacun crée un lien personnel à coller dans les connecteurs de son Claude (claude.ai, appli mobile, ordinateur).
+- On parle ensuite à Claude de sa cave : « que boire ce soir avec un poulet rôti ? », « complète les fiches qui manquent », « présente-moi ce domaine », « j'ai ouvert le Paulands, 16/20 », « ajoute cette facture ».
+- Les recherches passent par l'abonnement Claude de chacun : elles ne coûtent rien à l'app et ne comptent pas dans le plafond. Le lien se révoque à tout moment.
+
 ### Comptes
 - **☁️ Synchronisation** : la même cave sur tous ses appareils, photos comprises. L'app marche aussi hors ligne et synchronise dès que la connexion revient.
 - **🔐 Compte obligatoire** (email + mot de passe, mot de passe oublié) : chacun ne voit que sa cave.
@@ -58,12 +63,15 @@
 |---|---|
 | **GitHub Pages** | Héberge l'application (`index.html`, un seul fichier HTML/CSS/JavaScript, sans dépendance). |
 | **Supabase** | Comptes utilisateurs, base de données (caves, commandes groupées, partages, accords mémorisés), stockage privé des photos, et la fonction serveur `chercher-vin`. |
+| **Connecteur MCP `ma-cave-mcp`** | Fonction Supabase qui donne au Claude de chaque utilisateur l'accès à sa cave (lecture, fiches, domaines, garde, dégustations, ajouts), avec un lien personnel révocable. |
 | **API Claude (Anthropic)** | Lecture des étiquettes et des propositions de cavistes, recherche web pour les fiches et la garde, conseils d'accords. Appelée uniquement par la fonction serveur : la clé API n'apparaît jamais dans la page. |
 
 ```
 Téléphone / ordinateur ──► Supabase (compte, cave, photos, commandes, partages)
           │
           └──► fonction chercher-vin ──► API Claude (étiquettes, recherche web, accords)
+
+Claude de l'utilisateur ──► connecteur ma-cave-mcp ──► sa cave (et le catalogue partagé)
 ```
 
 ## Organisation du dépôt
@@ -71,6 +79,7 @@ Téléphone / ordinateur ──► Supabase (compte, cave, photos, commandes, pa
 ```
 index.html                                  l'application
 supabase/functions/chercher-vin/index.ts    la fonction serveur (recherche, photos, garde, accords, propositions)
+supabase/functions/ma-cave-mcp/index.ts     le connecteur pour Claude (serveur MCP)
 ```
 
 ## Sécurité
@@ -79,4 +88,5 @@ supabase/functions/chercher-vin/index.ts    la fonction serveur (recherche, phot
 - Les recherches par IA ne sont accessibles qu'aux comptes validés par l'administrateur (table `membres`) ; chaque recherche est journalisée.
 - Toutes les données sont protégées par des règles d'accès (RLS) : chacun ne lit et ne modifie que sa cave, ses photos et ses recherches ; une commande groupée n'est visible que par ses participants.
 - Chaque compte a un plafond mensuel de recherches IA (5 $ par défaut, réglable par l'administrateur) ; le coût réel de chaque recherche est calculé et journalisé.
+- Le connecteur Claude n'est accessible qu'avec un lien personnel : seule son empreinte est gardée en base, il ne donne accès qu'à la cave de son propriétaire et se révoque depuis l'app.
 - Une limite de dépense mensuelle globale est aussi fixée côté API Claude.
