@@ -12,7 +12,7 @@
 // À déployer sans vérification du JWT (verify_jwt = false) : Claude n'envoie pas de jeton Supabase.
 
 const NOM = "ma-cave";
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://straussette.github.io). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
@@ -24,7 +24,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Quand il dit avoir ouvert ou bu une bouteille, utilise ouvrir_bouteille (stock −1, date notée dans « Dégustées »), avec sa note s'il en donne une. Pour une simple correction de stock, utilise modifier_bouteille.
 - Pour ajouter des vins (facture, liste, photo d'étiquette), utilise ajouter_vins ; un vin déjà présent (même domaine, cuvée, appellation, millésime et format) voit sa quantité augmenter.
 - Photos et listes envoyées depuis l'app (imports) : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Pour chaque vin, fais aussi une recherche web pour sa fiche (description, cépages, accords, service, apogée, fenêtre boireDe/boireA, prix du marché, sources) ; si la liste est longue, fais au mieux et laisse sans fiche ce que tu n'as pas trouvé. N'ajoute PAS toi-même ces vins (ni ajouter_vins, ni ajouter_vins_commande) : envoie ta lecture avec proposer_vins, puis dis à l'utilisateur d'ouvrir l'app Ma Cave, où il vérifie les quantités et les formats et valide l'ajout.
-- Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé) : tous les participants la voient en touchant le vin dans la commande.
+- Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé), et enregistrer_domaine_commande présente chaque domaine qui ne l'est pas encore (histoire, vignoble, style, cuvées phares) : tous les participants les voient en touchant le vin dans la commande.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
 // ---------- Supabase (clé secrète du projet) ----------
@@ -562,6 +562,22 @@ const OUTILS = [
     annotations: { title: "Fiche d'un vin de commande", readOnlyHint: false, destructiveHint: false },
   },
   {
+    name: "enregistrer_domaine_commande",
+    description: "Enregistre la présentation d'un domaine dont des vins sont proposés dans une commande groupée (organisée ou rejointe) : visible par tous les participants sur ces vins, et partagée au catalogue si l'utilisateur est membre.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        commande_id: texte,
+        domaine: { ...texte, description: "Nom du domaine tel qu'il est écrit dans la commande" },
+        presentation: { ...texte, description: "Histoire, vignoble, viticulture, style, cuvées phares (5 à 8 phrases)" },
+        site: { ...texte, description: "Site officiel du domaine, s'il existe" },
+        remplacer: { type: "boolean", description: "Remplacer une présentation déjà là" },
+      },
+      required: ["commande_id", "domaine", "presentation"],
+    },
+    annotations: { title: "Domaine d'une commande", readOnlyHint: false, destructiveHint: false },
+  },
+  {
     name: "degustees",
     description: "Journal des bouteilles bues (dates d'ouverture), le plus récent d'abord, avec les notes de dégustation.",
     inputSchema: { type: "object", properties: { depuis: { ...texte, description: "Date de début (AAAA-MM-JJ)" } } },
@@ -935,7 +951,10 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       const vins = await sb(`/rest/v1/commande_vins?select=id,data,prix&commande_id=eq.${c.id}&order=cree`) || [];
       return {
         commande: c.titre,
-        vins: vins.map((v: any) => ({ vin_id: v.id, vin: nomVin(v.data || {}), prix_propose_eur: Number(v.prix) || undefined, fiche: !!v.data?.fiche?.description })),
+        vins: vins.map((v: any) => ({
+          vin_id: v.id, vin: nomVin(v.data || {}), prix_propose_eur: Number(v.prix) || undefined,
+          fiche: !!(v.data?.fiche?.description || v.data?.description), domaine_presente: !!(v.data?.domaineInfo || v.data?.fiche?.domaineInfo),
+        })),
       };
     }
 
@@ -956,6 +975,31 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       const cle = cleCatalogue(v.data || {});
       const partage = cle ? await publier(uid, cle, { ...choisirChamps(v.data || {}, ["classement", "couleur"]), ...fiche }, false) : "non partagée (domaine ou appellation manquant)";
       return { ok: true, vin: nomVin(v.data || {}), catalogue: partage };
+    }
+
+    case "enregistrer_domaine_commande": {
+      const c = await commandeVisible(uid, a.commande_id);
+      const presentation = borne(a.presentation, 3000);
+      if (presentation.length < 80) throw new Error("présentation trop courte");
+      const cle = cleDomaine(a.domaine);
+      if (!cle) throw new Error("nom de domaine vide");
+      const vins = await sb(`/rest/v1/commande_vins?select=id,data&commande_id=eq.${c.id}`) || [];
+      const memes = vins.filter((v: any) => v.data?.domaine && memeDomaine(cleDomaine(v.data.domaine), cle));
+      if (!memes.length) throw new Error("aucun vin de ce domaine dans cette commande (vérifie avec vins_commande)");
+      const site = estUrl(a.site) ? borne(a.site, 300) : "";
+      const changes = memes.filter((v: any) => a.remplacer || !v.data.domaineInfo);
+      if (!changes.length) return { ok: false, message: "les vins de ce domaine ont déjà une présentation : rien changé (utilise remplacer pour la refaire)" };
+      for (const v of changes) {
+        await sb(`/rest/v1/commande_vins?id=eq.${v.id}&commande_id=eq.${c.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ data: { ...v.data, domaineInfo: presentation, domaineSite: site } }),
+        });
+      }
+      const cd = cleCatalogueDomaine(memes[0].data.domaine)!;
+      const partage = await publier(uid, cd, { presentation, site, nom: memes[0].data.domaine }, false);
+      await cloreDemandes(uid, cd);
+      return { ok: true, vins_mis_a_jour: changes.length, deja_presentes: memes.length - changes.length, catalogue: partage };
     }
 
     case "degustees": {

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-31.6">
+<meta name="app-version" content="2026-10-31.7">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -4017,16 +4017,23 @@ function comparerPrix(v, f) {
 
 function messageFichesCommande(c, v = null) {
   return v
-    ? `Dans Ma Cave, cherche sur le web la fiche du vin « ${nomVin(v.data || {})} » (vin_id ${v.id}) de la commande groupée « ${c.titre} » (commande_id ${c.id}) : description, cépages, accords, apogée, fenêtre de dégustation et prix du marché, avec tes sources. Enregistre-la avec enregistrer_fiche_commande et dis-moi si le prix proposé (${fmtEuro(Number(v.prix) || 0)}) est intéressant.`
-    : `Dans Ma Cave, crée les fiches des vins de la commande groupée « ${c.titre} » (commande_id ${c.id}) qui n'en ont pas encore : liste-les avec vins_commande, cherche chacun sur le web (description, cépages, accords, apogée, fenêtre de dégustation, prix du marché, avec tes sources), enregistre chaque fiche avec enregistrer_fiche_commande, puis résume-moi les bonnes affaires par rapport aux prix proposés.`;
+    ? `Dans Ma Cave, cherche sur le web la fiche du vin « ${nomVin(v.data || {})} » (vin_id ${v.id}) de la commande groupée « ${c.titre} » (commande_id ${c.id}) : description, cépages, accords, apogée, fenêtre de dégustation et prix du marché, avec tes sources. Enregistre-la avec enregistrer_fiche_commande, présente aussi le domaine s'il ne l'est pas (enregistrer_domaine_commande), et dis-moi si le prix proposé (${fmtEuro(Number(v.prix) || 0)}) est intéressant.`
+    : `Dans Ma Cave, crée les fiches des vins de la commande groupée « ${c.titre} » (commande_id ${c.id}) qui n'en ont pas encore : liste-les avec vins_commande, cherche chacun sur le web (description, cépages, accords, apogée, fenêtre de dégustation, prix du marché, avec tes sources) et enregistre chaque fiche avec enregistrer_fiche_commande. Présente aussi chaque domaine qui ne l'est pas encore (enregistrer_domaine_commande). Puis résume-moi les bonnes affaires par rapport aux prix proposés.`;
 }
+
+// Domaine d'un vin de commande déjà présenté (dans la commande, sa fiche ou le catalogue) ?
+const domainePresente = (c, v) => {
+  const d = v.data || {};
+  return !!(d.domaineInfo || ficheVinCommande(v)?.domaineInfo || (fichesCommande.cmdId === c.id && fichesCommande.domaines.get(cleDomaine(d.domaine))));
+};
 
 function boutonsFichesCommande(c) {
   const sans = c.commande_vins.filter((v) => !ficheVinCommande(v));
-  if (!sans.length) return '';
-  const demandables = sans.filter((v) => cleCatalogue(v.data || {})).length;
+  const domainesSans = new Set(c.commande_vins.filter((v) => v.data?.domaine && !domainePresente(c, v)).map((v) => cleDomaine(v.data.domaine))).size;
+  if (!sans.length && !domainesSans) return '';
+  const demandables = sans.filter((v) => cleCatalogue(v.data || {})).length + domainesSans;
   return `<div class="actions" style="margin:0; flex-wrap:wrap">
-    ${claudeParDefaut() ? `<button type="button" class="btn primary petit-btn" data-act="fichesClaude">🤖 Créer les fiches avec mon Claude (${sans.length})</button>` : ''}
+    ${claudeParDefaut() ? `<button type="button" class="btn primary petit-btn" data-act="fichesClaude">🤖 Créer les fiches avec mon Claude (${[sans.length ? `${sans.length} vin${sans.length > 1 ? 's' : ''}` : '', domainesSans ? `${domainesSans} domaine${domainesSans > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ')})</button>` : ''}
     ${demandables ? `<button type="button" class="btn secondary petit-btn" data-act="fichesDemander">🤝 Demander les fiches (gratuit)</button>` : ''}
   </div>`;
 }
@@ -4035,18 +4042,22 @@ function ouvrirFicheCommande(c, v) {
   if (!v) return;
   const f = ficheVinCommande(v);
   const d = v.data || {};
-  const dom = fichesCommande.cmdId === c.id ? fichesCommande.domaines.get(cleDomaine(d.domaine)) : null;
+  const domCatalogue = fichesCommande.cmdId === c.id ? fichesCommande.domaines.get(cleDomaine(d.domaine)) : null;
+  // Présentation du domaine : écrite dans la commande (Claude d'un participant), sinon celle de la fiche ou du catalogue
+  const domaineInfo = d.domaineInfo || f?.domaineInfo || domCatalogue?.presentation || '';
+  const domaineSite = d.domaineInfo ? (d.domaineSite || '') : (f?.domaineSite || domCatalogue?.site || '');
   const cmp = comparerPrix(v, f);
   $('#ficheCmdContenu').innerHTML = `
     <h2>${esc(nomVin(d))}</h2>
     <div class="petit">Proposé à ${fmtEuro(Number(v.prix) || 0)} la bouteille dans « ${esc(c.titre)} »</div>
     ${cmp ? `<div class="comparaison-prix"><span class="pastille ${cmp.cls}" style="justify-self:start">${esc(cmp.court)}</span><span class="petit">${esc(cmp.long)}</span></div>` : ''}
-    ${f ? `<div class="fiche">${htmlFiche({ ...f, domaineInfo: f.domaineInfo || dom?.presentation || '', domaineSite: f.domaineSite || dom?.site || '' })}</div>`
+    ${f ? `<div class="fiche">${htmlFiche({ ...f, domaineInfo, domaineSite })}</div>`
       : `<p class="petit">Pas encore de fiche pour ce vin.</p>
          <div class="actions" style="margin:0; flex-wrap:wrap">
            ${claudeParDefaut() ? '<button type="button" class="btn primary petit-btn" data-fc="claude">🤖 Rechercher avec mon Claude</button>' : ''}
            ${cleCatalogue(d) ? '<button type="button" class="btn secondary petit-btn" data-fc="demander">🤝 Demander la fiche (gratuit)</button>' : ''}
-         </div>`}
+         </div>
+         ${domaineInfo ? `<div class="fiche"><div><h3>Le domaine</h3>${htmlDomaine({ domaineInfo, domaineSite })}</div></div>` : ''}`}
     <p class="search-status" id="ficheCmdStatut" hidden></p>
     <div class="actions"><span class="spacer"></span><button type="button" class="btn secondary" data-fc="fermer">Fermer</button></div>`;
   $('#ficheCmdContenu').dataset.cmd = c.id;
@@ -4310,10 +4321,15 @@ $('#cmdContenu').addEventListener('click', async (e) => {
   if (act === 'fichesClaude') return ouvrirDansClaude(messageFichesCommande(c));
   if (act === 'fichesDemander') {
     const liste = c.commande_vins.filter((v) => !ficheVinCommande(v) && cleCatalogue(v.data || {})).map((v) => ({ ...v.data }));
-    if (!liste.length || !confirm(`Demander gratuitement les fiches de ${liste.length} vin${liste.length > 1 ? 's' : ''} ?\nElles seront recherchées de temps en temps, puis visibles ici par tous les participants.`)) return;
+    const domaines = c.commande_vins.filter((v) => v.data?.domaine && !domainePresente(c, v)).map((v) => ({ ...v.data }));
+    const nDom = new Set(domaines.map((d) => cleDomaine(d.domaine))).size;
+    const quoi = [liste.length ? `les fiches de ${liste.length} vin${liste.length > 1 ? 's' : ''}` : '', nDom ? `la présentation de ${nDom} domaine${nDom > 1 ? 's' : ''}` : ''].filter(Boolean).join(' et ');
+    if (!quoi || !confirm(`Demander gratuitement ${quoi} ?\nElles seront recherchées de temps en temps, puis visibles ici par tous les participants.`)) return;
     try {
-      const r = await demanderRecherches(liste, 'vin');
-      cmdStatut(`✓ ${r.envoyees} demande${r.envoyees > 1 ? 's' : ''} envoyée${r.envoyees > 1 ? 's' : ''}.`);
+      const r1 = liste.length ? await demanderRecherches(liste, 'vin') : { envoyees: 0 };
+      const r2 = nDom ? await demanderRecherches(domaines, 'domaine') : { envoyees: 0 };
+      const n = r1.envoyees + r2.envoyees;
+      cmdStatut(`✓ ${n} demande${n > 1 ? 's' : ''} envoyée${n > 1 ? 's' : ''}.`);
     } catch (err) { cmdStatut('Échec : ' + err.message, true); }
     return;
   }
