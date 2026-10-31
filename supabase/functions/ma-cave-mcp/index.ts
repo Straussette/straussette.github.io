@@ -12,7 +12,7 @@
 // À déployer sans vérification du JWT (verify_jwt = false) : Claude n'envoie pas de jeton Supabase.
 
 const NOM = "ma-cave";
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://straussette.github.io). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
@@ -24,7 +24,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Quand il dit avoir ouvert ou bu une bouteille, utilise ouvrir_bouteille (stock −1, date notée dans « Dégustées »), avec sa note s'il en donne une. Pour une simple correction de stock, utilise modifier_bouteille.
 - Pour ajouter des vins (facture, liste, photo d'étiquette), utilise ajouter_vins ; un vin déjà présent (même domaine, cuvée, appellation, millésime et format) voit sa quantité augmenter.
 - Photos et listes envoyées depuis l'app : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Montre d'abord à l'utilisateur la liste que tu as lue (domaine, cuvée, appellation, millésime, format, quantité, prix) et attends sa validation avant d'ajouter. Puis ajouter_vins (sa cave) ou ajouter_vins_commande (import destiné à une commande groupée), et termine avec terminer_import.
-- Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée).
+- Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé) : tous les participants la voient en touchant le vin dans la commande.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
 // ---------- Supabase (clé secrète du projet) ----------
@@ -249,6 +249,15 @@ function enBase64(octets: Uint8Array): string {
   let t = "";
   for (let i = 0; i < octets.length; i += 0x8000) t += String.fromCharCode(...octets.subarray(i, i + 0x8000));
   return btoa(t);
+}
+// Commande organisée ou rejointe par l'utilisateur
+async function commandeVisible(uid: string, id: string) {
+  if (!UUID.test(String(id || ""))) throw new Error("identifiant de commande invalide");
+  const c = (await sb(`/rest/v1/commandes?select=id,titre,organisateur,statut&id=eq.${id}`))?.[0];
+  const participe = c && (c.organisateur === uid
+    || (await sb(`/rest/v1/commande_participants?select=user_id&commande_id=eq.${id}&user_id=eq.${uid}`))?.length);
+  if (!participe) throw new Error("commande introuvable parmi celles que tu organises ou as rejointes");
+  return c;
 }
 async function maCommande(uid: string, id: string) {
   if (!UUID.test(String(id || ""))) throw new Error("identifiant de commande invalide");
@@ -500,6 +509,22 @@ const OUTILS = [
       required: ["commande_id", "vins"],
     },
     annotations: { title: "Ajouter à une commande", readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "vins_commande",
+    description: "Vins d'une commande groupée (organisée ou rejointe), avec leur prix proposé et s'ils ont déjà une fiche.",
+    inputSchema: { type: "object", properties: { commande_id: texte }, required: ["commande_id"] },
+    annotations: { title: "Vins d'une commande", readOnlyHint: true },
+  },
+  {
+    name: "enregistrer_fiche_commande",
+    description: "Enregistre la fiche d'un vin d'une commande groupée (trouvée par recherche web), visible par tous les participants, avec le prix du marché pour comparer au prix proposé. Partagée aussi au catalogue si l'utilisateur est membre.",
+    inputSchema: {
+      type: "object",
+      properties: { commande_id: texte, vin_id: texte, ...CHAMPS_FICHE_SCHEMA, remplacer: { type: "boolean", description: "Remplacer une fiche déjà là" } },
+      required: ["commande_id", "vin_id", "description", "sources"],
+    },
+    annotations: { title: "Fiche d'un vin de commande", readOnlyHint: false, destructiveHint: false },
   },
   {
     name: "degustees",
@@ -831,6 +856,34 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
         });
       }
       return { ok: true, commande: c.titre, vins_ajoutes: lignes.length, sans_prix: lignes.filter((l: Vin) => !l.prix).length };
+    }
+
+    case "vins_commande": {
+      const c = await commandeVisible(uid, a.commande_id);
+      const vins = await sb(`/rest/v1/commande_vins?select=id,data,prix&commande_id=eq.${c.id}&order=cree`) || [];
+      return {
+        commande: c.titre,
+        vins: vins.map((v: any) => ({ vin_id: v.id, vin: nomVin(v.data || {}), prix_propose_eur: Number(v.prix) || undefined, fiche: !!v.data?.fiche?.description })),
+      };
+    }
+
+    case "enregistrer_fiche_commande": {
+      const c = await commandeVisible(uid, a.commande_id);
+      if (!UUID.test(String(a.vin_id || ""))) throw new Error("identifiant de vin invalide");
+      const v = (await sb(`/rest/v1/commande_vins?select=id,data&commande_id=eq.${c.id}&id=eq.${a.vin_id}`))?.[0];
+      if (!v) throw new Error("vin introuvable dans cette commande (vérifie avec vins_commande)");
+      const fiche = nettoyerFiche(a);
+      if (!fiche.description) throw new Error("la fiche doit contenir une description");
+      if (v.data?.fiche?.description && !a.remplacer) return { ok: false, message: "ce vin a déjà une fiche : rien changé (utilise remplacer pour la refaire)" };
+      const data = { ...(v.data || {}), fiche: { ...fiche, le: new Date().toISOString() } };
+      await sb(`/rest/v1/commande_vins?id=eq.${v.id}&commande_id=eq.${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ data }),
+      });
+      const cle = cleCatalogue(v.data || {});
+      const partage = cle ? await publier(uid, cle, { ...choisirChamps(v.data || {}, ["classement", "couleur"]), ...fiche }, false) : "non partagée (domaine ou appellation manquant)";
+      return { ok: true, vin: nomVin(v.data || {}), catalogue: partage };
     }
 
     case "degustees": {

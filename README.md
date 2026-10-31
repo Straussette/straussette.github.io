@@ -44,6 +44,7 @@
 - **📦 Caisses** : quantités par multiples de 3 ou 6, suivi du remplissage des caisses.
 - **💸 Dettes** : chacun voit ce qu'il doit ; remboursement par virement, déclaré par l'ami puis confirmé par l'organisateur.
 - **🚚 Livraison** : reçue, puis « à récupérer » / « récupéré » pour chacun ; les bouteilles s'ajoutent automatiquement à la cave de chacun.
+- **📄 Fiche de chaque vin proposé** : en touchant un vin, sa fiche (créée par le Claude d'un participant, ou reprise du catalogue partagé) et la **comparaison du prix proposé avec le prix du marché** (« 👍 −20 % vs marché », « +15 % vs marché »).
 - **📊 Récapitulatif** pour l'organisateur, exportable en CSV.
 
 ### 🤖 Avec son propre Claude

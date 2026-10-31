@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-31.4">
+<meta name="app-version" content="2026-10-31.5">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -154,6 +154,8 @@
   .carte-simple strong { font-size:1.02rem; }
   .petit { font-size:.85rem; color:var(--muted); }
   .pastille { display:inline-block; font-size:.78rem; font-weight:600; padding:2px 8px; border-radius:999px; color:var(--b); background:color-mix(in srgb, var(--b) 14%, transparent); }
+  .nom-vin-cmd { padding:0; text-align:left; font-weight:700; color:var(--text); }
+  .comparaison-prix { display:grid; gap:4px; padding:10px 12px; border-radius:12px; background:var(--surface); border:1px solid var(--border); }
   .p-ouverte { --b:var(--ok); } .p-commandee { --b:var(--vite); } .p-recue { --b:var(--accent); } .p-neutre { --b:var(--tot); } .p-alerte { --b:var(--passe); }
   .liste-simple { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
 
@@ -412,6 +414,10 @@
 
 <dialog id="dlgCommande">
   <div class="cmd" id="cmdContenu"></div>
+</dialog>
+
+<dialog id="dlgFicheCmd">
+  <div class="cmd" id="ficheCmdContenu"></div>
 </dialog>
 
 <div class="fabs" id="fabs">
@@ -3570,6 +3576,7 @@ function ouvrirCommande(id) {
   commandeOuverte = id;
   afficherCommande();
   if (!$('#dlgCommande').open) $('#dlgCommande').showModal();
+  chargerFichesCommande(id);
 }
 $('#dlgCommande').addEventListener('close', () => { commandeOuverte = null; });
 
@@ -3634,6 +3641,7 @@ function afficherCommande() {
     <section>
       <h3>Vins (${c.commande_vins.length})</h3>
       ${c.commande_vins.length ? '' : '<p class="petit">Aucun vin pour l\'instant.</p>'}
+      ${boutonsFichesCommande(c)}
       ${c.commande_vins.map((v) => {
         const parts = c.commande_participants.map((p) => [p, qte(v.id, p.user_id)]).filter(([, q]) => q > 0);
         const maQ = qte(v.id, moi());
@@ -3644,7 +3652,10 @@ function afficherCommande() {
         return `
         <div class="cmd-vin" data-vin="${esc(v.id)}">
           <div class="ligne">
-            <strong>${esc(nomVin(v.data))}</strong>
+            <div>
+              <button type="button" class="link nom-vin-cmd" data-act="ficheVin">${esc(nomVin(v.data))} ${ficheVinCommande(v) ? '📄' : ''}</button>
+              ${(() => { const cmp = comparerPrix(v, ficheVinCommande(v)); return cmp ? `<div><span class="pastille ${cmp.cls}">${esc(cmp.court)}</span></div>` : ''; })()}
+            </div>
             ${jeSuisOrga
               ? `<label class="petit">Prix <input class="prix-input" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(v.prix) || ''}" data-act="prix"> €</label>`
               : `<span>${fmtEur(v.prix)} / bout.</span>`}
@@ -3899,6 +3910,99 @@ function etatCaisses(total, caisse) {
     : `${txt} · ✓ caisses complètes`;
 }
 
+/* ---------- Fiches des vins d'une commande ---------- */
+// Fiche d'un vin proposé : celle écrite dans la commande (par le Claude d'un participant), sinon celle du catalogue partagé
+let fichesCommande = { cmdId: null, vins: new Map(), domaines: new Map() };
+
+async function chargerFichesCommande(id) {
+  const c = commandes.find((x) => x.id === id);
+  if (!c || !session) return;
+  const datas = c.commande_vins.map((v) => v.data || {});
+  try {
+    const [vins, domaines] = await Promise.all([chercherFichesVins(datas), chercherDomaines(datas.map((d) => d.domaine).filter(Boolean))]);
+    fichesCommande = { cmdId: id, vins, domaines };
+  } catch { return; } // hors ligne : les fiches écrites dans la commande suffisent
+  if (commandeOuverte === id) afficherCommande();
+}
+
+function ficheVinCommande(v) {
+  const d = v.data || {};
+  if (d.fiche && d.fiche.description) return d.fiche;
+  if (d.description) return d; // fiche trouvée par la recherche au moment de l'ajout du vin
+  if (fichesCommande.cmdId !== v.commande_id) return null;
+  return fichesCommande.vins.get(cleCatalogue(d)) || null;
+}
+
+// Prix proposé comparé au prix du marché (fiche, donné pour 75 cl, ajusté au format)
+function comparerPrix(v, f) {
+  const prix = Number(v.prix) || 0;
+  if (!f || !prix) return null;
+  const min = Number(f.prixMin) || 0, max = Number(f.prixMax) || 0;
+  const k = facteurFormat(v.data?.format);
+  const marche = (min && max ? (min + max) / 2 : (min || max)) * k;
+  if (!marche) return null;
+  const ecart = Math.round((prix - marche) / marche * 100);
+  const fourchette = min && max ? `${fmtEuro(min * k)} – ${fmtEuro(max * k)}` : fmtEuro(marche);
+  if (ecart <= -10) return { cls: 'p-ouverte', court: `👍 ${ecart} % vs marché`, long: `Bon prix : ${fmtEuro(prix)} contre ${fourchette} sur le marché (${ecart} %).` };
+  if (ecart >= 10) return { cls: 'p-alerte', court: `+${ecart} % vs marché`, long: `Plus cher que le marché : ${fmtEuro(prix)} contre ${fourchette} (+${ecart} %).` };
+  return { cls: 'p-neutre', court: '≈ prix du marché', long: `Dans les prix du marché : ${fmtEuro(prix)} contre ${fourchette}.` };
+}
+
+function messageFichesCommande(c, v = null) {
+  return v
+    ? `Dans Ma Cave, cherche sur le web la fiche du vin « ${nomVin(v.data || {})} » (vin_id ${v.id}) de la commande groupée « ${c.titre} » (commande_id ${c.id}) : description, cépages, accords, apogée, fenêtre de dégustation et prix du marché, avec tes sources. Enregistre-la avec enregistrer_fiche_commande et dis-moi si le prix proposé (${fmtEuro(Number(v.prix) || 0)}) est intéressant.`
+    : `Dans Ma Cave, crée les fiches des vins de la commande groupée « ${c.titre} » (commande_id ${c.id}) qui n'en ont pas encore : liste-les avec vins_commande, cherche chacun sur le web (description, cépages, accords, apogée, fenêtre de dégustation, prix du marché, avec tes sources), enregistre chaque fiche avec enregistrer_fiche_commande, puis résume-moi les bonnes affaires par rapport aux prix proposés.`;
+}
+
+function boutonsFichesCommande(c) {
+  const sans = c.commande_vins.filter((v) => !ficheVinCommande(v));
+  if (!sans.length) return '';
+  const demandables = sans.filter((v) => cleCatalogue(v.data || {})).length;
+  return `<div class="actions" style="margin:0; flex-wrap:wrap">
+    ${claudeParDefaut() ? `<button type="button" class="btn primary petit-btn" data-act="fichesClaude">🤖 Créer les fiches avec mon Claude (${sans.length})</button>` : ''}
+    ${demandables ? `<button type="button" class="btn secondary petit-btn" data-act="fichesDemander">🤝 Demander les fiches (gratuit)</button>` : ''}
+  </div>`;
+}
+
+function ouvrirFicheCommande(c, v) {
+  if (!v) return;
+  const f = ficheVinCommande(v);
+  const d = v.data || {};
+  const dom = fichesCommande.cmdId === c.id ? fichesCommande.domaines.get(cleDomaine(d.domaine)) : null;
+  const cmp = comparerPrix(v, f);
+  $('#ficheCmdContenu').innerHTML = `
+    <h2>${esc(nomVin(d))}</h2>
+    <div class="petit">Proposé à ${fmtEuro(Number(v.prix) || 0)} la bouteille dans « ${esc(c.titre)} »</div>
+    ${cmp ? `<div class="comparaison-prix"><span class="pastille ${cmp.cls}" style="justify-self:start">${esc(cmp.court)}</span><span class="petit">${esc(cmp.long)}</span></div>` : ''}
+    ${f ? `<div class="fiche">${htmlFiche({ ...f, domaineInfo: f.domaineInfo || dom?.presentation || '', domaineSite: f.domaineSite || dom?.site || '' })}</div>`
+      : `<p class="petit">Pas encore de fiche pour ce vin.</p>
+         <div class="actions" style="margin:0; flex-wrap:wrap">
+           ${claudeParDefaut() ? '<button type="button" class="btn primary petit-btn" data-fc="claude">🤖 Rechercher avec mon Claude</button>' : ''}
+           ${cleCatalogue(d) ? '<button type="button" class="btn secondary petit-btn" data-fc="demander">🤝 Demander la fiche (gratuit)</button>' : ''}
+         </div>`}
+    <p class="search-status" id="ficheCmdStatut" hidden></p>
+    <div class="actions"><span class="spacer"></span><button type="button" class="btn secondary" data-fc="fermer">Fermer</button></div>`;
+  $('#ficheCmdContenu').dataset.cmd = c.id;
+  $('#ficheCmdContenu').dataset.vin = v.id;
+  $('#dlgFicheCmd').showModal();
+}
+
+$('#ficheCmdContenu').addEventListener('click', async (e) => {
+  const act = e.target.closest('[data-fc]')?.dataset.fc;
+  if (!act) return;
+  if (act === 'fermer') return $('#dlgFicheCmd').close();
+  const c = commandes.find((x) => x.id === $('#ficheCmdContenu').dataset.cmd);
+  const v = c?.commande_vins.find((x) => x.id === $('#ficheCmdContenu').dataset.vin);
+  if (!v) return;
+  if (act === 'claude') return ouvrirDansClaude(messageFichesCommande(c, v));
+  if (act === 'demander') {
+    try {
+      const r = await demanderRecherches([{ ...v.data }], 'vin');
+      statutGenerique($('#ficheCmdStatut'), r.envoyees ? '✓ Fiche demandée : elle apparaîtra ici quand elle sera faite.' : 'Cette fiche est déjà demandée.');
+    } catch (err) { statutGenerique($('#ficheCmdStatut'), 'Échec : ' + err.message, true); }
+  }
+});
+
 /* ---------- Import d'une proposition (photo, PDF, tableau) ---------- */
 let propale = null; // { cmdId, fournisseur, remarques, vins: [{ ...data, prix, coche }] }
 let propaleClaude = null; // { cmdId, message } : offre déposée, à faire lire par Claude
@@ -4134,6 +4238,17 @@ $('#cmdContenu').addEventListener('click', async (e) => {
     } catch (err) { statutGenerique($('#cv-statut'), 'Recherche impossible : ' + err.message, true); }
     return;
   }
+  if (act === 'ficheVin') return ouvrirFicheCommande(c, c.commande_vins.find((x) => x.id === vinId));
+  if (act === 'fichesClaude') return ouvrirDansClaude(messageFichesCommande(c));
+  if (act === 'fichesDemander') {
+    const liste = c.commande_vins.filter((v) => !ficheVinCommande(v) && cleCatalogue(v.data || {})).map((v) => ({ ...v.data }));
+    if (!liste.length || !confirm(`Demander gratuitement les fiches de ${liste.length} vin${liste.length > 1 ? 's' : ''} ?\nElles seront recherchées de temps en temps, puis visibles ici par tous les participants.`)) return;
+    try {
+      const r = await demanderRecherches(liste, 'vin');
+      cmdStatut(`✓ ${r.envoyees} demande${r.envoyees > 1 ? 's' : ''} envoyée${r.envoyees > 1 ? 's' : ''}.`);
+    } catch (err) { cmdStatut('Échec : ' + err.message, true); }
+    return;
+  }
   if (act === 'propaleAnnuler') { propale = null; return afficherCommande(); }
   if (act === 'propaleAjouter') {
     const choisis = propale.vins.filter((v) => v.coche && (v.domaine || v.appellation));
@@ -4237,9 +4352,9 @@ async function integrerCommandesALaCave() {
           classement: d.classement || '',
           format: d.format ? (/magnum/i.test(d.format) && !/double/i.test(d.format) ? 'Magnum' : d.format) : '',
           millesime: d.millesime || '', couleur: COULEURS.includes(d.couleur) ? d.couleur : 'Rouge',
-          quantite: part.quantite, boireDe: d.boireDe || '', boireA: d.boireA || '',
+          quantite: part.quantite, boireDe: d.boireDe || d.fiche?.boireDe || '', boireA: d.boireA || d.fiche?.boireA || '',
           prix: Number(v.prix) || '', emplacement: '', notes: `${d.format ? 'Format ' + d.format + ' · ' : ''}Commande « ${c.titre} »${c.fournisseur ? ' chez ' + c.fournisseur : ''}${c.date_commande ? ' (' + fmtDate(c.date_commande) + ')' : ''}`,
-          ...Object.fromEntries(CHAMPS_FICHE.map((k) => [k, d[k] ?? ''])),
+          ...Object.fromEntries(CHAMPS_FICHE.map((k) => [k, d[k] ?? d.fiche?.[k] ?? ''])),
         };
         const existant = jeSuisOrga ? bottles.find((x) => cleVin(x) === cleVin(b) && !x.aRecuperer) : null;
         if (existant) {
