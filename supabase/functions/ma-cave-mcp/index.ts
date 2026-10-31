@@ -12,7 +12,7 @@
 // À déployer sans vérification du JWT (verify_jwt = false) : Claude n'envoie pas de jeton Supabase.
 
 const NOM = "ma-cave";
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://straussette.github.io). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
@@ -23,6 +23,8 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Fenêtres de dégustation : pour affiner une garde, cherche des fenêtres publiées (critiques, domaine, millésime) et enregistre-les avec enregistrer_garde.
 - Quand il dit avoir ouvert ou bu une bouteille, utilise ouvrir_bouteille (stock −1, date notée dans « Dégustées »), avec sa note s'il en donne une. Pour une simple correction de stock, utilise modifier_bouteille.
 - Pour ajouter des vins (facture, liste, photo d'étiquette), utilise ajouter_vins ; un vin déjà présent (même domaine, cuvée, appellation, millésime et format) voit sa quantité augmenter.
+- Photos et listes envoyées depuis l'app : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Montre d'abord à l'utilisateur la liste que tu as lue (domaine, cuvée, appellation, millésime, format, quantité, prix) et attends sa validation avant d'ajouter. Puis ajouter_vins (sa cave) ou ajouter_vins_commande (import destiné à une commande groupée), et termine avec terminer_import.
+- Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée).
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
 // ---------- Supabase (clé secrète du projet) ----------
@@ -152,6 +154,17 @@ const pret = (b: Vin) => /^(ouvrable|à l'apogée|à boire|prêt)/.test(statut(b
 const nomVin = (b: Vin) => [b.domaine, b.cuvee, b.appellation].filter(Boolean).join(" · ") + (b.millesime ? ` ${b.millesime}` : "") + (b.format ? ` (${b.format})` : "");
 const vide = (x: unknown) => x === undefined || x === null || x === "";
 
+// Même écriture du domaine que dans la cave (ou presque : « Dubreuil » → « Domaine Philippe et Arnaud Dubreuil », si un seul domaine correspond)
+function domaineDansCave(cave: Vin[], nom: unknown): string {
+  const propre = nettoyerDomaine(nom);
+  const cd = cleDomaine(propre);
+  if (!cd) return propre;
+  const ecritures = [...new Set(cave.map((b) => b.domaine).filter(Boolean))];
+  const proches = [...new Set(ecritures.filter((d) => memeDomaine(cleDomaine(d), cd)).map(cleDomaine))];
+  return ecritures.find((d) => cleDomaine(d) === cd)
+    || (proches.length === 1 && ecritures.find((d) => cleDomaine(d) === proches[0])) || propre;
+}
+
 // ---------- Accès à la cave ----------
 
 async function lireCave(uid: string): Promise<Vin[]> {
@@ -208,6 +221,40 @@ async function cloreDemandes(uid: string, cle: string) {
     headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
     body: JSON.stringify({ statut: "faite", traitee: new Date().toISOString() }),
   }).catch(() => {});
+}
+
+// ---------- Imports (fichiers déposés depuis l'app) ----------
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function lireImport(uid: string, id: string) {
+  if (!UUID.test(String(id || ""))) throw new Error("identifiant d'import invalide");
+  const l = (await sb(`/rest/v1/imports?select=id,but,commande_id,fichiers,statut,cree&user_id=eq.${uid}&id=eq.${id}`))?.[0];
+  if (!l) throw new Error("import introuvable (vérifie avec imports_a_traiter)");
+  return l;
+}
+// Seuls les chemins déposés par l'app : <uid>/<uuid de l'import>/<n>.<jpg|pdf|txt>
+const cheminSur = (uid: string, chemin: unknown) => {
+  const m = /^([0-9a-f-]{36})\/([0-9a-f-]{36})\/\d{1,2}\.(jpg|pdf|txt)$/i.exec(String(chemin || ""));
+  return !!m && m[1] === uid && UUID.test(m[2]);
+};
+async function telecharger(uid: string, chemin: string): Promise<Uint8Array> {
+  if (!cheminSur(uid, chemin)) throw new Error("fichier inaccessible");
+  const entetes: Record<string, string> = { apikey: SB_CLE };
+  if (SB_CLE.startsWith("eyJ")) entetes.Authorization = `Bearer ${SB_CLE}`;
+  const r = await fetch(`${SB_URL}/storage/v1/object/imports/${chemin.split("/").map(encodeURIComponent).join("/")}`, { headers: entetes });
+  if (!r.ok) { console.error("Stockage", r.status, (await r.text()).slice(0, 300)); throw new Error(`fichier illisible (${r.status})`); }
+  return new Uint8Array(await r.arrayBuffer());
+}
+function enBase64(octets: Uint8Array): string {
+  let t = "";
+  for (let i = 0; i < octets.length; i += 0x8000) t += String.fromCharCode(...octets.subarray(i, i + 0x8000));
+  return btoa(t);
+}
+async function maCommande(uid: string, id: string) {
+  if (!UUID.test(String(id || ""))) throw new Error("identifiant de commande invalide");
+  const c = (await sb(`/rest/v1/commandes?select=id,titre,fournisseur,statut&organisateur=eq.${uid}&id=eq.${id}`))?.[0];
+  if (!c) throw new Error("commande introuvable parmi celles que tu organises (vérifie avec mes_commandes)");
+  return c;
 }
 
 function resume(b: Vin) {
@@ -398,6 +445,61 @@ const OUTILS = [
       required: ["vins"],
     },
     annotations: { title: "Ajouter des vins", readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "imports_a_traiter",
+    description: "Photos et listes envoyées depuis l'app Ma Cave pour que tu les traites (ajout à la cave, ou offre d'un caviste pour une commande groupée).",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { title: "Imports en attente", readOnlyHint: true },
+  },
+  {
+    name: "lire_import",
+    description: "Montre le contenu d'un import : photos (images), listes et tableaux (texte), PDF.",
+    inputSchema: { type: "object", properties: { id: texte }, required: ["id"] },
+    annotations: { title: "Lire un import", readOnlyHint: true },
+  },
+  {
+    name: "terminer_import",
+    description: "Marque un import comme traité et supprime ses fichiers, une fois les vins ajoutés (ou si l'utilisateur renonce).",
+    inputSchema: { type: "object", properties: { id: texte }, required: ["id"] },
+    annotations: { title: "Terminer un import", readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "mes_commandes",
+    description: "Commandes groupées que l'utilisateur organise (titre, fournisseur, statut, vins déjà proposés).",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { title: "Mes commandes", readOnlyHint: true },
+  },
+  {
+    name: "ajouter_vins_commande",
+    description: "Ajoute des vins (offre d'un caviste ou d'un domaine) à une commande groupée ouverte que l'utilisateur organise. Prix TTC par bouteille.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        commande_id: texte,
+        fournisseur: { ...texte, description: "Nom du caviste ou du domaine, s'il n'est pas déjà renseigné" },
+        vins: {
+          type: "array",
+          minItems: 1,
+          maxItems: 150,
+          items: {
+            type: "object",
+            properties: {
+              domaine: texte, cuvee: texte, appellation: texte, classement: texte,
+              millesime: { type: "integer" },
+              couleur: { type: "string", enum: COULEURS },
+              format: { type: "string", enum: FORMATS, description: "Vide = bouteille 75 cl" },
+              prix: { type: "number", description: "Prix TTC par bouteille, en €" },
+              caisse: { type: "integer", description: "Taille de caisse imposée (6, 12…), si indiquée" },
+              remarque: { ...texte, description: "Allocation, quantité max, prix HT…" },
+            },
+            required: ["domaine", "appellation"],
+          },
+        },
+      },
+      required: ["commande_id", "vins"],
+    },
+    annotations: { title: "Ajouter à une commande", readOnlyHint: false, destructiveHint: false },
   },
   {
     name: "degustees",
@@ -596,14 +698,7 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       for (const v of a.vins) {
         const q = Number(v.quantite);
         if (!Number.isInteger(q) || q < 1) throw new Error("quantité invalide pour " + (v.domaine || "un vin"));
-        // Même écriture du domaine que dans la cave
-        const propre = nettoyerDomaine(v.domaine);
-        const cd = cleDomaine(propre);
-        // (ou presque : « Dubreuil » → « Domaine Philippe et Arnaud Dubreuil », si un seul domaine correspond)
-        const ecritures = [...new Set(cave.map((b) => b.domaine).filter(Boolean))];
-        const proches = [...new Set(ecritures.filter((d) => memeDomaine(cleDomaine(d), cd)).map(cleDomaine))];
-        const domaine = (cd && ecritures.find((d) => cleDomaine(d) === cd))
-          || (proches.length === 1 && ecritures.find((d) => cleDomaine(d) === proches[0])) || propre;
+        const domaine = domaineDansCave(cave, v.domaine);
         const format = FORMATS.includes(v.format) ? v.format : "";
         const millesime = Number(v.millesime) || "";
         const base: Vin = {
@@ -640,6 +735,102 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       const liste = [...aEcrire.values()];
       for (let i = 0; i < liste.length; i += 100) await ecrireVins(uid, liste.slice(i, i + 100));
       return { ok: true, bilan, a_completer: liste.filter((b) => !b.description).map((b) => ({ id: b.id, vin: nomVin(b) })) };
+    }
+
+    case "imports_a_traiter": {
+      const lignes = await sb(`/rest/v1/imports?select=id,but,commande_id,fichiers,cree&user_id=eq.${uid}&statut=eq.attente&order=cree.desc&limit=20`) || [];
+      const titres = new Map<string, string>();
+      const ids = [...new Set(lignes.map((l: any) => l.commande_id).filter((i: string) => UUID.test(String(i || ""))))];
+      if (ids.length) for (const c of await sb(`/rest/v1/commandes?select=id,titre&organisateur=eq.${uid}&id=in.(${ids.join(",")})`) || []) titres.set(c.id, c.titre);
+      return {
+        imports: lignes.map((l: any) => ({
+          id: l.id, cree: l.cree,
+          but: l.but === "commande" ? `offre pour la commande « ${titres.get(l.commande_id) || "?"} » (commande_id ${l.commande_id})` : "ajout à la cave",
+          fichiers: (l.fichiers || []).map((f: Vin) => `${f.nom || "fichier"} (${f.type})`),
+        })),
+      };
+    }
+
+    case "lire_import": {
+      const imp = await lireImport(uid, a.id);
+      const blocs: Vin[] = [{
+        type: "text",
+        text: imp.but === "commande"
+          ? `Import ${imp.id} : offre à ajouter à la commande groupée ${imp.commande_id} (ajouter_vins_commande, après validation de l'utilisateur).`
+          : `Import ${imp.id} : bouteilles à ajouter à la cave (ajouter_vins, après validation de l'utilisateur).`,
+      }];
+      for (const f of (imp.fichiers || []).slice(0, 12)) {
+        if (!cheminSur(uid, f.chemin)) continue; // jamais le fichier d'un autre compte
+        const octets = await telecharger(uid, f.chemin);
+        if (f.type === "image") blocs.push({ type: "image", data: enBase64(octets), mimeType: /\.png$/i.test(f.chemin) ? "image/png" : "image/jpeg" });
+        else if (f.type === "texte") blocs.push({ type: "text", text: `--- ${borne(f.nom, 120)} ---\n` + new TextDecoder().decode(octets).slice(0, 200_000) });
+        else if (f.type === "pdf") blocs.push({ type: "resource", resource: { uri: `ma-cave://imports/${imp.id}/${encodeURIComponent(borne(f.nom, 120) || "document.pdf")}`, mimeType: "application/pdf", blob: enBase64(octets) } });
+      }
+      return { __contenu: blocs };
+    }
+
+    case "terminer_import": {
+      const imp = await lireImport(uid, a.id);
+      const chemins = (imp.fichiers || []).map((f: Vin) => f.chemin).filter((c: string) => cheminSur(uid, c));
+      if (chemins.length) {
+        await sb(`/storage/v1/object/imports`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prefixes: chemins }),
+        }).catch(() => {});
+      }
+      await sb(`/rest/v1/imports?user_id=eq.${uid}&id=eq.${imp.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ statut: "traite", traite: new Date().toISOString() }),
+      });
+      return { ok: true };
+    }
+
+    case "mes_commandes": {
+      const lignes = await sb(`/rest/v1/commandes?select=id,titre,fournisseur,statut,cree,commande_vins(data,prix)&organisateur=eq.${uid}&order=cree.desc&limit=20`) || [];
+      return {
+        commandes: lignes.map((c: any) => ({
+          id: c.id, titre: c.titre, fournisseur: c.fournisseur || undefined, statut: c.statut,
+          vins: (c.commande_vins || []).map((v: any) => `${nomVin(v.data || {})} — ${Number(v.prix) || 0} €`),
+        })),
+      };
+    }
+
+    case "ajouter_vins_commande": {
+      const c = await maCommande(uid, a.commande_id);
+      if (c.statut !== "ouverte") throw new Error("cette commande n'est plus ouverte : on ne peut plus y ajouter de vins");
+      if (!Array.isArray(a.vins) || !a.vins.length) throw new Error("liste de vins vide");
+      if (a.vins.length > 150) throw new Error("150 vins au plus par appel");
+      const cave = await lireCave(uid);
+      const lignes = a.vins.map((v: Vin) => {
+        const prix = Number(v.prix);
+        const caisse = Number(v.caisse);
+        const data: Vin = {
+          domaine: borne(domaineDansCave(cave, v.domaine), 150), cuvee: borne(v.cuvee, 150),
+          appellation: borne(nettoyerAppellation(v.appellation), 150),
+          millesime: Number(v.millesime) || "", couleur: COULEURS.includes(v.couleur) ? v.couleur : "Rouge",
+        };
+        if (!data.domaine && !data.appellation) throw new Error("domaine ou appellation manquant");
+        if (!vide(v.classement)) data.classement = borne(v.classement, 120);
+        if (FORMATS.includes(v.format) && v.format) data.format = v.format;
+        if (!vide(v.remarque)) data.remarque = borne(v.remarque, 300);
+        if (Number.isInteger(caisse) && caisse > 1 && caisse <= 120) data.caisse = caisse;
+        return { commande_id: c.id, prix: isFinite(prix) && prix > 0 ? Math.round(prix * 100) / 100 : 0, data, ajoute_par: uid };
+      });
+      await sb(`/rest/v1/commande_vins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify(lignes),
+      });
+      if (!vide(a.fournisseur) && !c.fournisseur) {
+        await sb(`/rest/v1/commandes?id=eq.${c.id}&organisateur=eq.${uid}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ fournisseur: borne(a.fournisseur, 150) }),
+        });
+      }
+      return { ok: true, commande: c.titre, vins_ajoutes: lignes.length, sans_prix: lignes.filter((l: Vin) => !l.prix).length };
     }
 
     case "degustees": {
@@ -696,7 +887,8 @@ async function traiterMessage(uid: string, m: any): Promise<unknown | null> {
       const nom = String(p.name || "");
       if (!OUTILS.some((o) => o.name === nom)) return erreurRpc(m.id, -32602, `outil inconnu : ${nom}`);
       try {
-        const r = await appelerOutil(uid, nom, p.arguments ?? {});
+        const r: any = await appelerOutil(uid, nom, p.arguments ?? {});
+        if (r && Array.isArray(r.__contenu)) return { jsonrpc: "2.0", id: m.id, result: { content: r.__contenu } };
         return { jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: JSON.stringify(r, null, 1) }], structuredContent: r } };
       } catch (e) {
         return { jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "Erreur : " + (e as Error).message }], isError: true } };

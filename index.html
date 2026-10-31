@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-31.2">
+<meta name="app-version" content="2026-10-31.3">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -286,6 +286,9 @@
   /* ---------- Connecteur Claude ---------- */
   .etapes-claude { margin:0; padding-left:20px; display:grid; gap:6px; font-size:.92rem; line-height:1.45; }
   .bloc-lien-claude { display:grid; gap:8px; }
+  .case-claude { display:flex; gap:8px; align-items:flex-start; }
+  .case-claude input { margin-top:3px; width:20px; height:20px; }
+  .info-claude { margin:0; font-size:.85rem; color:var(--muted); }
   .lien-claude { width:100%; font-family:ui-monospace, Menlo, monospace; font-size:.78rem; }
   .exemples-claude { margin:0; padding-left:20px; font-size:.88rem; color:var(--muted); display:grid; gap:4px; }
 </style>
@@ -470,6 +473,10 @@
       <input class="lien-claude" id="claudeLien" readonly>
       <button type="button" class="btn primary" id="btnCopierLienClaude">Copier le lien</button>
     </div>
+    <label class="petit case-claude" id="claudeDefautBloc" hidden>
+      <input type="checkbox" id="claudeDefaut">
+      <span><strong>Utiliser mon Claude par défaut</strong> pour les fiches, les domaines, la garde, « Que boire ? » et les ajouts (photos, listes, offres de caviste). Les boutons de l'app ouvrent alors Claude avec la demande déjà écrite. Réglage propre à cet appareil.</span>
+    </label>
     <ol class="etapes-claude">
       <li>Créez votre lien ci-dessous, puis copiez-le.</li>
       <li>Sur <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener">claude.ai → Paramètres → Connecteurs</a> (depuis un navigateur), choisissez « Ajouter un connecteur personnalisé ».</li>
@@ -501,7 +508,9 @@
       <span>📄 Importer une liste</span>
     </label>
     <p class="search-help" style="margin:0">Ou <button type="button" class="link" id="lotMain">✍️ saisir un vin à la main</button></p>
+    <p class="info-claude" id="lotInfoClaude" hidden>🤖 Les photos et les listes seront lues par votre Claude (réglable dans Mon compte → Brancher mon Claude).</p>
     <p class="search-status" id="lotStatus" hidden></p>
+    <a class="btn primary" id="lotClaude" target="_blank" rel="noopener" hidden>🤖 Ouvrir Claude pour les ajouter</a>
     <div class="progress" id="lotProgress" hidden><div></div></div>
     <ul class="lot-list" id="lotList"></ul>
     <label class="petit" id="lotFichesBloc" style="display:flex; gap:8px; align-items:flex-start" hidden>
@@ -1544,6 +1553,7 @@ let occasionAccord = 'quotidien';
 
 $('#btnAccord').onclick = () => {
   statutGenerique($('#ac-statut'), '');
+  $('#ac-go').textContent = claudeParDefaut() ? '🤖 Demander à mon Claude' : 'Trouver dans ma cave';
   $('#dlgAccord').showModal();
   afficherHistoriqueAccords();
   chargerAccords();
@@ -1639,6 +1649,10 @@ async function lancerAccord(forcer = false) {
   if (!forcer) {
     const deja = accordsMemo.find((a) => cleRepas(a.repas) === cleRepas(repas) && (a.occasion || 'quotidien') === occasionAccord);
     if (deja) return montrerAccordMemo(deja, `Vous avez déjà cherché ce plat le ${fmtDate(deja.cree)} : voici le résultat, sans nouvelle recherche.`);
+  }
+  if (claudeParDefaut()) {
+    const occasion = occasionAccord === 'belle' ? 'une belle occasion' : 'un dîner du quotidien';
+    return ouvrirDansClaude(`Dans Ma Cave, que me conseilles-tu de boire avec : « ${repas} » (${occasion}) ? Regarde ce qui est prêt à boire dans ma cave (ma_cave) et propose-moi 2 ou 3 bouteilles en expliquant pourquoi.`);
   }
   const cave = caveCompacte();
   if (!cave.length) return statutGenerique($('#ac-statut'), 'Votre cave est vide.', true);
@@ -1928,7 +1942,9 @@ function afficherVue(message = '', erreur = false, enCours = false) {
       ${b.garde ? `<div class="fiche">${htmlGarde(b.garde)}</div>`
         : (b.apogee ? `<p class="petit">${esc(b.apogee)}</p>` : '')}
       <div class="actions" style="margin:0; flex-wrap:wrap">
-        <button type="button" class="btn ${b.garde ? 'secondary' : 'primary'} petit-btn" data-vue="garde">🎯 ${b.garde ? 'Mettre à jour la garde' : 'Affiner la garde'}</button>
+        ${claudeParDefaut()
+          ? `<button type="button" class="btn ${b.garde ? 'secondary' : 'primary'} petit-btn" data-vue="claudeGarde">🤖 ${b.garde ? 'Mettre à jour la garde' : 'Affiner la garde'} avec mon Claude</button>`
+          : `<button type="button" class="btn ${b.garde ? 'secondary' : 'primary'} petit-btn" data-vue="garde">🎯 ${b.garde ? 'Mettre à jour la garde' : 'Affiner la garde'}</button>`}
         <button type="button" class="btn secondary petit-btn" data-vue="degust">📝 Noter une dégustation</button>
       </div>
       <p class="search-status${erreur ? ' err' : ''}" ${message ? '' : 'hidden'}>${enCours ? '<span class="spin"></span>' : ''}${esc(message)}</p>
@@ -1944,8 +1960,9 @@ function afficherVue(message = '', erreur = false, enCours = false) {
       : `<section><h3>Fiche</h3>
         <p class="petit" style="margin:0">${b.demandeFiche ? `⏳ Fiche demandée le ${fmtDate(b.demandeFiche)} : elle s'ajoutera toute seule.` : 'Pas encore de description, d\'accords ni de prix du marché.'}</p>
         <div class="actions" style="margin:0; flex-wrap:wrap">
+          ${claudeParDefaut() ? '<button type="button" class="btn primary petit-btn" data-vue="claudeFiche">🤖 Rechercher avec mon Claude</button>' : ''}
           ${!b.demandeFiche && cleCatalogue(b) ? '<button type="button" class="btn secondary petit-btn" data-vue="demanderFiche">🤝 Demander la fiche (gratuit)</button>' : ''}
-          <button type="button" class="link" data-vue="modifier">🔍 Rechercher tout de suite (≈ 0,07 $)</button>
+          <button type="button" class="link" data-vue="modifier">🔍 Rechercher ${claudeParDefaut() ? 'dans l\'app' : 'tout de suite'} (≈ 0,07 $)</button>
         </div></section>`}
 
     <section>
@@ -1953,9 +1970,10 @@ function afficherVue(message = '', erreur = false, enCours = false) {
       ${infoDomaine ? `<div class="fiche">${htmlDomaine(infoDomaine)}</div>`
         : `<p class="petit" style="margin:0">Pas encore de présentation de ${esc(b.domaine || 'ce domaine')}.</p>
            ${b.domaine ? `<div class="actions" style="margin:0; flex-wrap:wrap">
+             ${claudeParDefaut() ? '<button type="button" class="btn primary petit-btn" data-vue="claudeDomaine">🤖 Présenter avec mon Claude</button>' : ''}
              ${b.demandeDomaine ? `<span class="petit">⏳ Présentation demandée le ${fmtDate(b.demandeDomaine)}.</span>`
                : '<button type="button" class="btn secondary petit-btn" data-vue="demanderDomaine">🤝 Demander (gratuit)</button>'}
-             <button type="button" class="link" data-vue="domaine">🏡 Chercher tout de suite (≈ 0,04 $)</button></div>` : ''}`}
+             <button type="button" class="link" data-vue="domaine">🏡 Chercher ${claudeParDefaut() ? 'dans l\'app' : 'tout de suite'} (≈ 0,04 $)</button></div>` : ''}`}
     </section>
 
     ${b.notes ? `<section><h3>Mes notes</h3><p style="white-space:pre-wrap; margin:0">${esc(b.notes)}</p></section>` : ''}
@@ -1982,6 +2000,10 @@ $('#vueContenu').addEventListener('click', async (e) => {
   const b = bottles.find((x) => x.id === vueId);
   if (act === 'fermer') return $('#dlgVue').close();
   if (!b) return;
+
+  if (act === 'claudeFiche') return ouvrirDansClaude(`Dans Ma Cave, cherche sur le web la fiche du vin « ${nomVin(b)} » (id ${b.id}) : description, cépages, accords, service, apogée, fenêtre de dégustation et prix du marché, avec tes sources. Puis enregistre-la avec enregistrer_fiche.`);
+  if (act === 'claudeDomaine') return ouvrirDansClaude(`Dans Ma Cave, présente-moi le domaine « ${b.domaine} » (histoire, vignoble, viticulture, style, cuvées phares), d'après une recherche web avec tes sources, puis enregistre la présentation avec enregistrer_domaine.`);
+  if (act === 'claudeGarde') return ouvrirDansClaude(`Dans Ma Cave, affine la fenêtre de dégustation du vin « ${nomVin(b)} » (id ${b.id}) : cherche les fenêtres publiées (critiques, domaine, millésime), tiens compte de mes dégustations (fiche_vin), puis enregistre-la avec enregistrer_garde.`);
 
   if (act === 'modifier') {
     retourVue = b.id;
@@ -2267,6 +2289,7 @@ $('#lotPhotos').addEventListener('change', async (e) => {
   const fichiers = [...e.target.files];
   e.target.value = '';
   if (!fichiers.length || lotOccupe) return;
+  if (claudeParDefaut()) return lotViaClaude(fichiers);
   const code = codeAcces();
   if (!code) { lotStatut('Un code d\'accès est nécessaire.', true); return; }
 
@@ -2339,6 +2362,7 @@ $('#lotListe').addEventListener('change', async (e) => {
   const fichiers = [...e.target.files];
   e.target.value = '';
   if (!fichiers.length || lotOccupe) return;
+  if (claudeParDefaut()) return lotViaClaude(fichiers);
   const code = codeAcces();
   if (!code) return;
   lotOccupe = true;
@@ -2498,10 +2522,12 @@ $('#lotGo').onclick = async () => {
 // Bouton unique « + Ajouter des bouteilles » : photo (une ou plusieurs), liste, ou saisie à la main
 function ouvrirAjout() {
   if (!session) return;
+  $('#lotInfoClaude').hidden = !claudeParDefaut();
   if (!lotOccupe) {
     lot = [];
     lotFiches = null;
     $('#lotDemander').hidden = true;
+    $('#lotClaude').hidden = true;
     lotStatut('');
     lotProgression(0, 0);
     afficherLot();
@@ -3129,9 +3155,79 @@ async function majEtatClaude() {
     : 'Aucun lien pour l\'instant.';
   $('#btnCouperClaude').hidden = !etat;
   $('#btnCreerLienClaude').textContent = etat ? 'Nouveau lien' : 'Créer mon lien';
+  $('#claudeDefautBloc').hidden = !etat;
+  $('#claudeDefaut').checked = claudeParDefaut();
+}
+
+// « Claude par défaut » : choisi par l'utilisateur, sur cet appareil, une fois son lien créé
+const cleClaudeDefaut = () => 'ma-cave-claude-defaut-' + (session?.user?.id || '');
+function claudeParDefaut() {
+  if (!session) return false;
+  try { return localStorage.getItem(cleClaudeDefaut()) === '1'; } catch { return false; }
+}
+function choisirClaudeParDefaut(oui) {
+  try { if (oui) localStorage.setItem(cleClaudeDefaut(), '1'); else localStorage.removeItem(cleClaudeDefaut()); } catch {}
+}
+
+const lienClaude = (message) => 'https://claude.ai/new?q=' + encodeURIComponent(message);
+// Ouvre une conversation Claude avec la demande déjà écrite (copiée aussi, au cas où)
+function ouvrirDansClaude(message) {
+  try { navigator.clipboard?.writeText(message).catch(() => {}); } catch {}
+  const url = lienClaude(message);
+  const w = window.open(url, '_blank');
+  if (w) w.opener = null; else location.href = url;
+}
+
+// Dépose des photos ou des listes dans l'espace privé « imports », pour que Claude les lise par le connecteur
+async function deposerPourClaude(fichiers, but, commandeId = null) {
+  const uid = session.user.id;
+  const id = nouvelId();
+  const liste = [];
+  for (let n = 0; n < fichiers.length && n < 12; n++) {
+    const f = fichiers[n];
+    const nom = (f.name || `fichier ${n + 1}`).slice(0, 120);
+    let corps, type, ext, mime;
+    if (f.type.startsWith('image/')) {
+      corps = await dataUrlVersBlob(await compresser(f, 2000, 0.85)); type = 'image'; ext = 'jpg'; mime = 'image/jpeg';
+    } else if (f.type === 'application/pdf' || /\.pdf$/i.test(nom)) {
+      if (f.size > 9 * 1024 * 1024) throw new Error(`${nom} dépasse 9 Mo`);
+      corps = f; type = 'pdf'; ext = 'pdf'; mime = 'application/pdf';
+    } else {
+      const piece = await pieceDepuisFichier(f); // tableur → texte (CSV par feuille)
+      corps = new Blob([piece.texte || ''], { type: 'text/plain' }); type = 'texte'; ext = 'txt'; mime = 'text/plain;charset=utf-8';
+    }
+    const chemin = `${uid}/${id}/${n + 1}.${ext}`;
+    await sbFetch(`/storage/v1/object/imports/${chemin}`, { method: 'POST', headers: { 'Content-Type': mime }, body: corps });
+    liste.push({ chemin, type, nom });
+  }
+  await jsonPost('/rest/v1/imports', { id, but, commande_id: commandeId, fichiers: liste });
+  return id;
+}
+
+async function lotViaClaude(fichiers) {
+  lotOccupe = true;
+  afficherLot();
+  try {
+    lotStatut('Envoi à votre Claude…', false, true);
+    const id = await deposerPourClaude(fichiers, 'cave');
+    const message = `Dans Ma Cave, traite l'import ${id} : lis-le avec lire_import, repère chaque vin (domaine, cuvée, appellation, millésime, format, quantité), montre-moi la liste pour que je valide, puis ajoute les vins à ma cave avec ajouter_vins et termine l'import.`;
+    $('#lotClaude').href = lienClaude(message);
+    $('#lotClaude').hidden = false;
+    lotStatut(`✓ ${fichiers.length > 1 ? `${Math.min(fichiers.length, 12)} fichiers envoyés` : 'Fichier envoyé'}. Ouvrez Claude : il vous montrera les vins trouvés, puis les ajoutera après votre accord. Revenez ensuite ici.`);
+  } catch (err) {
+    lotStatut('Envoi impossible : ' + err.message, true);
+  } finally {
+    lotOccupe = false;
+    afficherLot();
+  }
 }
 
 $('#btnBrancherClaude').onclick = () => { $('#dlgCompte').close(); ouvrirClaude(); };
+$('#claudeDefaut').onchange = (e) => {
+  choisirClaudeParDefaut(e.target.checked);
+  statutClaude(e.target.checked ? '✓ Votre Claude sera utilisé par défaut sur cet appareil.' : 'Les recherches se feront de nouveau dans l\'app.');
+  afficher();
+};
 $('#claudeFermer').onclick = () => $('#dlgClaude').close();
 $('#btnCreerLienClaude').onclick = async () => {
   if (!$('#btnCouperClaude').hidden && !confirm('Créer un nouveau lien ?\nL\'ancien ne marchera plus : il faudra mettre à jour le connecteur dans Claude.')) return;
@@ -3143,6 +3239,10 @@ $('#btnCreerLienClaude').onclick = async () => {
     $('#claudeLienBloc').hidden = false;
     statutClaude('✓ Lien créé. Copiez-le maintenant : il ne sera plus affiché ensuite.');
     await majEtatClaude();
+    if (!claudeParDefaut() && confirm('Utiliser votre Claude par défaut pour les recherches et les ajouts, sur cet appareil ?\n(Une fois le connecteur ajouté dans Claude. Modifiable ici à tout moment.)')) {
+      choisirClaudeParDefaut(true);
+      $('#claudeDefaut').checked = true;
+    }
   } catch (err) { statutClaude('Échec : ' + err.message, true); }
 };
 $('#btnCopierLienClaude').onclick = async () => {
@@ -3154,6 +3254,7 @@ $('#btnCouperClaude').onclick = async () => {
   if (!confirm('Couper l\'accès de Claude à votre cave ?\nLe lien actuel cessera de marcher.')) return;
   try {
     await rpcCompte('supprimer_cle_connecteur');
+    choisirClaudeParDefaut(false);
     $('#claudeLienBloc').hidden = true;
     statutClaude('✓ Accès coupé. Vous pouvez aussi retirer le connecteur dans les réglages de Claude.');
     await majEtatClaude();
@@ -3560,7 +3661,9 @@ function afficherCommande() {
           Choisir des fichiers
           <input type="file" id="propaleFichiers" multiple accept="image/*,application/pdf,.pdf,.csv,text/csv,.xlsx,.xls,.ods,.txt" hidden>
         </label>
+        ${claudeParDefaut() ? '<p class="info-claude">🤖 Votre Claude lira l\'offre et l\'ajoutera à la commande.</p>' : ''}
         <p class="search-status" id="propaleStatut" hidden></p>
+        ${propaleClaude?.cmdId === c.id ? `<a class="btn primary petit-btn" style="justify-self:start" target="_blank" rel="noopener" href="${esc(lienClaude(propaleClaude.message))}">🤖 Ouvrir Claude pour lire l'offre</a>` : ''}
         ${propaleHTML(c)}
       </div>` : ''}
 
@@ -3777,6 +3880,18 @@ function etatCaisses(total, caisse) {
 
 /* ---------- Import d'une proposition (photo, PDF, tableau) ---------- */
 let propale = null; // { cmdId, fournisseur, remarques, vins: [{ ...data, prix, coche }] }
+let propaleClaude = null; // { cmdId, message } : offre déposée, à faire lire par Claude
+
+async function propaleViaClaude(fichiers, c) {
+  const st = (t, e = false, enCours = false) => { const el = $('#propaleStatut'); if (el) statutGenerique(el, t, e, enCours); };
+  try {
+    st('Envoi de l\'offre…', false, true);
+    const id = await deposerPourClaude(fichiers, 'commande', c.id);
+    propaleClaude = { cmdId: c.id, message: `Dans Ma Cave, traite l'import ${id} : c'est l'offre du caviste pour ma commande groupée « ${c.titre} ». Lis-la avec lire_import, montre-moi les vins et les prix TTC par bouteille (et les tailles de caisse) pour que je valide, puis ajoute-les à la commande avec ajouter_vins_commande et termine l'import.` };
+    afficherCommande();
+    st('✓ Offre envoyée. Ouvrez Claude : il la lira et ajoutera les vins à la commande après votre validation. Revenez ensuite ici.');
+  } catch (err) { st('Envoi impossible : ' + err.message, true); }
+}
 
 function propaleHTML(c) {
   if (!propale || propale.cmdId !== c.id || !propale.vins.length) return '';
@@ -3871,7 +3986,7 @@ $('#cmdContenu').addEventListener('change', (e) => {
     const c = commandes.find((x) => x.id === commandeOuverte);
     const f = [...e.target.files];
     e.target.value = '';
-    if (c && f.length) importerPropale(f, c);
+    if (c && f.length) (claudeParDefaut() ? propaleViaClaude(f, c) : importerPropale(f, c));
   }
 });
 $('#cmdContenu').addEventListener('input', (e) => {

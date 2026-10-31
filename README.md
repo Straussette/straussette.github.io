@@ -50,6 +50,7 @@
 - **Connecteur « Ma Cave »** : depuis « Mon compte » → « Brancher mon Claude », chacun crée un lien personnel à coller dans les connecteurs de son Claude (claude.ai, appli mobile, ordinateur).
 - On parle ensuite à Claude de sa cave : « que boire ce soir avec un poulet rôti ? », « complète les fiches qui manquent », « présente-moi ce domaine », « j'ai ouvert le Paulands, 16/20 », « ajoute cette facture ».
 - Les recherches passent par l'abonnement Claude de chacun : elles ne coûtent rien à l'app et ne comptent pas dans le plafond. Le lien se révoque à tout moment.
+- **« Claude par défaut »** : les boutons de l'app (fiche, domaine, garde, « Que boire ? ») ouvrent Claude avec la demande déjà écrite. Les photos de bouteilles, les listes et les offres de caviste d'une commande groupée sont déposées dans l'espace privé du compte : Claude les lit, montre ce qu'il a trouvé, et ajoute après validation.
 
 ### Comptes
 - **☁️ Synchronisation** : la même cave sur tous ses appareils, photos comprises. L'app marche aussi hors ligne et synchronise dès que la connexion revient.
