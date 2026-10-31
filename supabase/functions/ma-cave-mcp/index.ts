@@ -12,7 +12,7 @@
 // À déployer sans vérification du JWT (verify_jwt = false) : Claude n'envoie pas de jeton Supabase.
 
 const NOM = "ma-cave";
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://straussette.github.io). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
@@ -23,7 +23,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Fenêtres de dégustation : pour affiner une garde, cherche des fenêtres publiées (critiques, domaine, millésime) et enregistre-les avec enregistrer_garde.
 - Quand il dit avoir ouvert ou bu une bouteille, utilise ouvrir_bouteille (stock −1, date notée dans « Dégustées »), avec sa note s'il en donne une. Pour une simple correction de stock, utilise modifier_bouteille.
 - Pour ajouter des vins (facture, liste, photo d'étiquette), utilise ajouter_vins ; un vin déjà présent (même domaine, cuvée, appellation, millésime et format) voit sa quantité augmenter.
-- Photos et listes envoyées depuis l'app : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Montre d'abord à l'utilisateur la liste que tu as lue (domaine, cuvée, appellation, millésime, format, quantité, prix) et attends sa validation avant d'ajouter. Puis ajouter_vins (sa cave) ou ajouter_vins_commande (import destiné à une commande groupée), et termine avec terminer_import.
+- Photos et listes envoyées depuis l'app (imports) : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Pour chaque vin, fais aussi une recherche web pour sa fiche (description, cépages, accords, service, apogée, fenêtre boireDe/boireA, prix du marché, sources) ; si la liste est longue, fais au mieux et laisse sans fiche ce que tu n'as pas trouvé. N'ajoute PAS toi-même ces vins (ni ajouter_vins, ni ajouter_vins_commande) : envoie ta lecture avec proposer_vins, puis dis à l'utilisateur d'ouvrir l'app Ma Cave, où il vérifie les quantités et les formats et valide l'ajout.
 - Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé) : tous les participants la voient en touchant le vin dans la commande.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
@@ -468,8 +468,43 @@ const OUTILS = [
     annotations: { title: "Lire un import", readOnlyHint: true },
   },
   {
+    name: "proposer_vins",
+    description: "Envoie à l'app Ma Cave les vins lus dans un import (avec leur fiche si tu l'as trouvée). L'utilisateur les vérifie (quantités, formats, prix) et valide l'ajout dans l'app : c'est la seule façon de traiter un import.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { ...texte, description: "Identifiant de l'import" },
+        fournisseur: { ...texte, description: "Pour une offre de caviste : nom du caviste ou du domaine" },
+        remarques: { ...texte, description: "Ce qui est douteux ou illisible, en une ou deux phrases" },
+        vins: {
+          type: "array",
+          minItems: 1,
+          maxItems: 300,
+          items: {
+            type: "object",
+            properties: {
+              domaine: texte, cuvee: texte, appellation: texte,
+              millesime: { type: "integer", description: "Vide si non millésimé" },
+              format: { type: "string", enum: FORMATS, description: "Vide = bouteille 75 cl" },
+              quantite: { type: "integer", minimum: 1, description: "Nombre de bouteilles (1 pour une offre de caviste)" },
+              prix: { type: "number", description: "Prix par bouteille en € (prix d'achat, ou prix TTC de l'offre)" },
+              caisse: { type: "integer", description: "Offre : taille de caisse imposée" },
+              remarque: { ...texte, description: "Offre : allocation, quantité max, prix HT…" },
+              certitude: { type: "string", enum: ["haute", "moyenne", "faible"], description: "Sûreté de la lecture" },
+              emplacement: texte, notes: texte,
+              ...CHAMPS_FICHE_SCHEMA,
+            },
+            required: ["domaine", "appellation"],
+          },
+        },
+      },
+      required: ["id", "vins"],
+    },
+    annotations: { title: "Proposer les vins lus", readOnlyHint: false, destructiveHint: false },
+  },
+  {
     name: "terminer_import",
-    description: "Marque un import comme traité et supprime ses fichiers, une fois les vins ajoutés (ou si l'utilisateur renonce).",
+    description: "Abandonne un import (si l'utilisateur renonce) : il est marqué traité et ses fichiers sont supprimés. Après proposer_vins, c'est l'app qui le termine, à la validation.",
     inputSchema: { type: "object", properties: { id: texte }, required: ["id"] },
     annotations: { title: "Terminer un import", readOnlyHint: false, destructiveHint: true },
   },
@@ -763,7 +798,7 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
     }
 
     case "imports_a_traiter": {
-      const lignes = await sb(`/rest/v1/imports?select=id,but,commande_id,fichiers,cree&user_id=eq.${uid}&statut=eq.attente&order=cree.desc&limit=20`) || [];
+      const lignes = await sb(`/rest/v1/imports?select=id,but,commande_id,fichiers,cree&user_id=eq.${uid}&statut=eq.attente&resultat=is.null&order=cree.desc&limit=20`) || [];
       const titres = new Map<string, string>();
       const ids = [...new Set(lignes.map((l: any) => l.commande_id).filter((i: string) => UUID.test(String(i || ""))))];
       if (ids.length) for (const c of await sb(`/rest/v1/commandes?select=id,titre&organisateur=eq.${uid}&id=in.(${ids.join(",")})`) || []) titres.set(c.id, c.titre);
@@ -781,8 +816,8 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       const blocs: Vin[] = [{
         type: "text",
         text: imp.but === "commande"
-          ? `Import ${imp.id} : offre à ajouter à la commande groupée ${imp.commande_id} (ajouter_vins_commande, après validation de l'utilisateur).`
-          : `Import ${imp.id} : bouteilles à ajouter à la cave (ajouter_vins, après validation de l'utilisateur).`,
+          ? `Import ${imp.id} : offre d'un caviste pour la commande groupée ${imp.commande_id}. Lis chaque vin et son prix TTC par bouteille, cherche sa fiche, puis envoie le tout avec proposer_vins (quantite 1).`
+          : `Import ${imp.id} : bouteilles à ajouter à la cave. Lis chaque vin, son nombre et son format, cherche sa fiche, puis envoie le tout avec proposer_vins.`,
       }];
       for (const f of (imp.fichiers || []).slice(0, 12)) {
         if (!cheminSur(uid, f.chemin)) continue; // jamais le fichier d'un autre compte
@@ -792,6 +827,43 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
         else if (f.type === "pdf") blocs.push({ type: "resource", resource: { uri: `ma-cave://imports/${imp.id}/${encodeURIComponent(borne(f.nom, 120) || "document.pdf")}`, mimeType: "application/pdf", blob: enBase64(octets) } });
       }
       return { __contenu: blocs };
+    }
+
+    case "proposer_vins": {
+      const imp = await lireImport(uid, a.id);
+      if (imp.statut !== "attente") throw new Error("cet import est déjà traité");
+      if (!Array.isArray(a.vins) || !a.vins.length) throw new Error("liste de vins vide");
+      if (a.vins.length > 300) throw new Error("300 vins au plus");
+      const vins = a.vins.map((v: Vin) => {
+        const q = Number(v.quantite), prix = Number(v.prix), caisse = Number(v.caisse), mil = Number(v.millesime);
+        const r: Vin = {
+          domaine: borne(nettoyerDomaine(v.domaine), 150), cuvee: borne(v.cuvee, 150),
+          appellation: borne(nettoyerAppellation(v.appellation), 150),
+          millesime: Number.isInteger(mil) && mil > 1800 && mil < 2200 ? mil : "",
+          format: FORMATS.includes(v.format) ? v.format : "",
+          quantite: Number.isInteger(q) && q > 0 && q < 1000 ? q : 1,
+        };
+        if (!r.domaine && !r.appellation) throw new Error("domaine ou appellation manquant");
+        if (isFinite(prix) && prix > 0 && prix < 100000) r.prix = Math.round(prix * 100) / 100;
+        if (Number.isInteger(caisse) && caisse > 1 && caisse <= 120) r.caisse = caisse;
+        for (const k of ["remarque", "emplacement"]) if (!vide(v[k])) r[k] = borne(v[k], 300);
+        if (!vide(v.notes)) r.notes = borne(v.notes, 2000);
+        if (["haute", "moyenne", "faible"].includes(v.certitude)) r.certitude = v.certitude;
+        const fiche = nettoyerFiche(v);
+        for (const k of ["region", "classement", "couleur", "boireDe", "boireA"]) if (fiche[k] !== undefined) { r[k] = fiche[k]; delete fiche[k]; }
+        if (fiche.description) r.fiche = fiche;
+        return r;
+      });
+      const resultat = { vins, fournisseur: borne(a.fournisseur, 150), remarques: borne(a.remarques, 600), le: new Date().toISOString() };
+      await sb(`/rest/v1/imports?user_id=eq.${uid}&id=eq.${imp.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ resultat }),
+      });
+      return {
+        ok: true, vins: vins.length, avec_fiche: vins.filter((v: Vin) => v.fiche).length,
+        suite: "Dis à l'utilisateur d'ouvrir (ou de revenir sur) l'app Ma Cave : la liste s'affiche pour qu'il vérifie quantités, formats et prix, puis valide.",
+      };
     }
 
     case "terminer_import": {
