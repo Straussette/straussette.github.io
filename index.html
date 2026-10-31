@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-31.1">
+<meta name="app-version" content="2026-10-31.2">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -440,7 +440,7 @@
       <p style="margin-top:6px">Pseudo : <strong id="c-monpseudo"></strong> <button type="button" class="link" id="btnChangerPseudo">Modifier</button></p>
       <p id="c-sync" style="margin-top:6px"></p>
       <p class="petit" id="c-demandes" style="margin-top:6px" hidden></p>
-      <p style="margin-top:6px"><button type="button" class="link" id="btnBrancherClaude">🤖 Brancher mon Claude</button> <span class="petit">— votre Claude fait les recherches et gère votre cave, sur votre abonnement</span></p>
+      <p style="margin-top:6px"><button type="button" class="link" id="btnBrancherClaude">🤖 Brancher mon Claude</button> <span class="petit" id="c-claude">— votre Claude fait les recherches et gère votre cave, sur votre abonnement</span></p>
     </div>
 
     <p class="search-status" id="compteStatut" hidden></p>
@@ -2896,6 +2896,7 @@ function afficherCompte(message) {
       '⚠️': '⚠️ Synchronisation impossible pour l\'instant (hors ligne ?). Vos changements sont gardés sur cet appareil et partiront plus tard.',
     }[etatSync] || '';
     afficherDemandesCompte();
+    afficherClaudeCompte();
   }
   if (message) compteStatut(message, true);
 }
@@ -3097,11 +3098,32 @@ async function ouvrirClaude() {
   await majEtatClaude();
 }
 
+const dateClaude = (d) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+let etatClaudeMemo = null; // { uid, etat, lu } : évite de relire l'état à chaque rafraîchissement de « Mon compte »
+
+async function lireEtatClaude(forcer = false) {
+  const uid = session?.user?.id;
+  if (!forcer && etatClaudeMemo && etatClaudeMemo.uid === uid && Date.now() - etatClaudeMemo.lu < 60_000) return etatClaudeMemo.etat;
+  const etat = ((await rpcCompte('etat_cle_connecteur')) || [])[0] || null;
+  etatClaudeMemo = { uid, etat, lu: Date.now() };
+  return etat;
+}
+
+// Ligne d'état dans « Mon compte » : branché ou non
+async function afficherClaudeCompte() {
+  const el = $('#c-claude');
+  let etat;
+  try { etat = await lireEtatClaude(); } catch { return; }
+  if (!etat) el.textContent = '— votre Claude fait les recherches et gère votre cave, sur votre abonnement';
+  else if (etat.utilise) el.textContent = `— ✓ branché (dernière utilisation le ${dateClaude(etat.utilise)})`;
+  else el.textContent = '— lien créé, pas encore utilisé par Claude';
+}
+
 async function majEtatClaude() {
   let etat = null;
-  try { etat = ((await rpcCompte('etat_cle_connecteur')) || [])[0] || null; }
+  try { etat = await lireEtatClaude(true); }
   catch { $('#claudeEtat').textContent = 'État du lien indisponible (hors ligne ?).'; return; }
-  const date = (d) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  const date = dateClaude;
   $('#claudeEtat').textContent = etat
     ? `✓ Lien créé le ${date(etat.cree)}${etat.utilise ? `, utilisé par Claude le ${date(etat.utilise)}` : ', pas encore utilisé par Claude'}. Le lien n'est affiché qu'une fois : si vous l'avez perdu, créez-en un nouveau (l'ancien cessera de marcher).`
     : 'Aucun lien pour l\'instant.';
