@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-31.7">
+<meta name="app-version" content="2026-10-31.8">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -2266,6 +2266,7 @@ function afficherLot() {
           </div>
           ${v.cuvee ? `<span>${esc(v.cuvee)}</span>` : ''}
           ${v.fiche ? '<span class="etat-ok">📄 fiche prête</span>' : ''}
+          ${v.domaineInfo ? '<span class="etat-ok">🏡 domaine présenté</span>' : ''}
           ${v.certitude && v.certitude !== 'haute' ? `<span>Lecture ${esc(v.certitude)} — vérifiez</span>` : ''}
           ${v.position ? `<span>📍 ${esc(v.position)}</span>` : ''}
           ${v.prix ? `<span>${esc(v.prix)} €</span>` : ''}
@@ -2504,8 +2505,14 @@ $('#lotGo').onclick = async () => {
       prix: v.prix || '', emplacement: v.emplacement || '', notes: v.notes || '',
       ...(fiche ? Object.fromEntries(CHAMPS_FICHE.map((k) => [k, fiche[k] ?? ''])) : {}),
     };
+    // Présentation du domaine proposée par Claude : gardée si le vin n'en a pas, et partagée
+    if (v.domaineInfo && !b.domaineInfo) {
+      b.domaineInfo = v.domaineInfo; b.domaineSite = v.domaineSite || '';
+      publierCatalogue([{ domaine: b.domaine, domaineInfo: v.domaineInfo, domaineSite: v.domaineSite || '' }], { remplacer: false });
+    }
     const existant = bottles.find((x) => cleVin(x) === cleVin(b));
     if (existant) {
+      if (b.domaineInfo && !existant.domaineInfo) { existant.domaineInfo = b.domaineInfo; existant.domaineSite = b.domaineSite || ''; }
       existant.quantite += b.quantite;
       cumules++;
       ajoutes.push(existant);
@@ -2529,6 +2536,12 @@ $('#lotGo').onclick = async () => {
   }));
 
   await completerDepuisCatalogue(ajoutes); // présentation des domaines déjà connus
+  // Présentation apportée par Claude : aussi pour les autres vins du même domaine déjà en cave
+  for (const x of bottles) {
+    if (x.domaineInfo || !x.domaine) continue;
+    const source = ajoutes.find((a) => a.domaineInfo && memeDomaine(cleDomaine(a.domaine), cleDomaine(x.domaine)));
+    if (source) { x.domaineInfo = source.domaineInfo; x.domaineSite = source.domaineSite || ''; }
+  }
   await enregistrer();
   afficher();
   if (lotImportId) { terminerImport(lotImportId); lotImportId = null; }
@@ -3244,7 +3257,7 @@ async function lotViaClaude(fichiers) {
   try {
     lotStatut('Envoi à votre Claude…', false, true);
     const id = await deposerPourClaude(fichiers, 'cave');
-    const message = `Dans Ma Cave, traite l'import ${id} : lis-le avec lire_import, repère chaque vin (domaine, cuvée, appellation, millésime, format, quantité), cherche sa fiche sur le web, puis envoie le tout avec proposer_vins : je vérifierai les quantités et les formats dans l'app avant d'ajouter.`;
+    const message = `Dans Ma Cave, traite l'import ${id} : lis-le avec lire_import, repère chaque vin (domaine, cuvée, appellation, millésime, format, quantité), cherche sa fiche sur le web et présente les domaines que ma cave ne connaît pas encore, puis envoie le tout avec proposer_vins : je vérifierai les quantités et les formats dans l'app avant d'ajouter.`;
     $('#lotClaude').href = lienClaude(message);
     $('#lotClaude').hidden = false;
     lotStatut(`✓ ${fichiers.length > 1 ? `${Math.min(fichiers.length, 12)} fichiers envoyés` : 'Fichier envoyé'}. Ouvrez Claude : il lira les vins et cherchera leurs fiches. Revenez ensuite ici : la liste s'affichera pour que vous vérifiiez les quantités et les formats avant d'ajouter.`);
@@ -3292,7 +3305,14 @@ async function verifierPropositions() {
       nombre: Number(v.quantite) || 1, certitude: v.certitude || '', prix: Number(v.prix) || '', emplacement: v.emplacement || '', notes: v.notes || '',
       boireDe: Number(v.boireDe) || '', boireA: Number(v.boireA) || '',
       fiche: v.fiche?.description ? v.fiche : null, coche: true, etat: '',
+      domaineInfo: v.domaineInfo || '', domaineSite: v.domaineSite || '',
     });
+  }
+  // Claude présente chaque domaine une seule fois : la présentation vaut pour tous ses vins de la liste
+  for (const v of lot) {
+    if (v.domaineInfo) continue;
+    const frere = lot.find((x) => x.domaineInfo && memeDomaine(cleDomaine(x.domaine), cleDomaine(v.domaine)));
+    if (frere) { v.domaineInfo = frere.domaineInfo; v.domaineSite = frere.domaineSite; }
   }
   afficherLot();
   lotStatut(`📥 ${r.vins.length} vin${r.vins.length > 1 ? 's' : ''} lu${r.vins.length > 1 ? 's' : ''} par votre Claude${r.remarques ? ` (${r.remarques})` : ''}. Vérifiez les quantités et les formats, puis « Ajouter ».`);
@@ -4090,7 +4110,7 @@ async function propaleViaClaude(fichiers, c) {
   try {
     st('Envoi de l\'offre…', false, true);
     const id = await deposerPourClaude(fichiers, 'commande', c.id);
-    propaleClaude = { cmdId: c.id, message: `Dans Ma Cave, traite l'import ${id} : c'est l'offre du caviste pour ma commande groupée « ${c.titre} ». Lis-la avec lire_import (vins, prix TTC par bouteille, tailles de caisse), cherche la fiche de chaque vin avec son prix du marché, puis envoie le tout avec proposer_vins : je validerai dans l'app.` };
+    propaleClaude = { cmdId: c.id, message: `Dans Ma Cave, traite l'import ${id} : c'est l'offre du caviste pour ma commande groupée « ${c.titre} ». Lis-la avec lire_import (vins, prix TTC par bouteille, tailles de caisse), cherche la fiche de chaque vin avec son prix du marché et présente chaque domaine, puis envoie le tout avec proposer_vins : je validerai dans l'app.` };
     afficherCommande();
     st('✓ Offre envoyée. Ouvrez Claude : il la lira et cherchera les fiches. Revenez ensuite ici pour vérifier la liste et l\'ajouter à la commande.');
   } catch (err) { st('Envoi impossible : ' + err.message, true); }
@@ -4117,6 +4137,7 @@ function propaleHTML(c) {
               ${Number(v.caisse) > 1 ? `<span>caisse de ${esc(v.caisse)}</span>` : ''}
               ${v.remarque ? `<span>${esc(v.remarque)}</span>` : ''}
               ${v.fiche ? '<span>📄 fiche prête</span>' : ''}
+              ${v.domaineInfo ? '<span>🏡 domaine présenté</span>' : ''}
             </div>
           </div>
         </li>`).join('')}
@@ -4348,6 +4369,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
         ...(v.remarque ? { remarque: v.remarque } : {}),
         ...(Number(v.caisse) > 1 ? { caisse: Number(v.caisse) } : {}),
         ...(v.fiche?.description ? { fiche: { ...v.fiche, ...Object.fromEntries(['region', 'boireDe', 'boireA'].filter((k) => v[k]).map((k) => [k, v[k]])) } } : {}),
+        ...(v.domaineInfo ? { domaineInfo: v.domaineInfo, domaineSite: v.domaineSite || '' } : {}),
       },
     }));
     const fournisseur = propale.fournisseur;

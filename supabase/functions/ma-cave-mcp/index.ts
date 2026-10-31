@@ -12,7 +12,7 @@
 // À déployer sans vérification du JWT (verify_jwt = false) : Claude n'envoie pas de jeton Supabase.
 
 const NOM = "ma-cave";
-const VERSION = "1.4.0";
+const VERSION = "1.5.0";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://straussette.github.io). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
@@ -23,7 +23,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Fenêtres de dégustation : pour affiner une garde, cherche des fenêtres publiées (critiques, domaine, millésime) et enregistre-les avec enregistrer_garde.
 - Quand il dit avoir ouvert ou bu une bouteille, utilise ouvrir_bouteille (stock −1, date notée dans « Dégustées »), avec sa note s'il en donne une. Pour une simple correction de stock, utilise modifier_bouteille.
 - Pour ajouter des vins (facture, liste, photo d'étiquette), utilise ajouter_vins ; un vin déjà présent (même domaine, cuvée, appellation, millésime et format) voit sa quantité augmenter.
-- Photos et listes envoyées depuis l'app (imports) : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Pour chaque vin, fais aussi une recherche web pour sa fiche (description, cépages, accords, service, apogée, fenêtre boireDe/boireA, prix du marché, sources) ; si la liste est longue, fais au mieux et laisse sans fiche ce que tu n'as pas trouvé. N'ajoute PAS toi-même ces vins (ni ajouter_vins, ni ajouter_vins_commande) : envoie ta lecture avec proposer_vins, puis dis à l'utilisateur d'ouvrir l'app Ma Cave, où il vérifie les quantités et les formats et valide l'ajout.
+- Photos et listes envoyées depuis l'app (imports) : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Pour chaque vin, fais aussi une recherche web pour sa fiche (description, cépages, accords, service, apogée, fenêtre boireDe/boireA, prix du marché, sources) ; si la liste est longue, fais au mieux et laisse sans fiche ce que tu n'as pas trouvé. Présente aussi chaque domaine qui ne l'est pas encore dans sa cave (ma_cave indique domaine_presente) : histoire, vignoble, viticulture, style, cuvées phares, dans domaineInfo et domaineSite (une seule fois par domaine suffit). N'ajoute PAS toi-même ces vins (ni ajouter_vins, ni ajouter_vins_commande) : envoie ta lecture avec proposer_vins, puis dis à l'utilisateur d'ouvrir l'app Ma Cave, où il vérifie les quantités et les formats et valide l'ajout.
 - Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé), et enregistrer_domaine_commande présente chaque domaine qui ne l'est pas encore (histoire, vignoble, style, cuvées phares) : tous les participants les voient en touchant le vin dans la commande.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
@@ -492,6 +492,8 @@ const OUTILS = [
               remarque: { ...texte, description: "Offre : allocation, quantité max, prix HT…" },
               certitude: { type: "string", enum: ["haute", "moyenne", "faible"], description: "Sûreté de la lecture" },
               emplacement: texte, notes: texte,
+              domaineInfo: { ...texte, description: "Présentation du domaine (5 à 8 phrases), s'il n'est pas déjà présenté dans la cave" },
+              domaineSite: { ...texte, description: "Site officiel du domaine" },
               ...CHAMPS_FICHE_SCHEMA,
             },
             required: ["domaine", "appellation"],
@@ -868,6 +870,8 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
         const fiche = nettoyerFiche(v);
         for (const k of ["region", "classement", "couleur", "boireDe", "boireA"]) if (fiche[k] !== undefined) { r[k] = fiche[k]; delete fiche[k]; }
         if (fiche.description) r.fiche = fiche;
+        const presentation = borne(v.domaineInfo, 3000);
+        if (presentation.length >= 80) { r.domaineInfo = presentation; r.domaineSite = estUrl(v.domaineSite) ? borne(v.domaineSite, 300) : ""; }
         return r;
       });
       const resultat = { vins, fournisseur: borne(a.fournisseur, 150), remarques: borne(a.remarques, 600), le: new Date().toISOString() };
@@ -877,7 +881,7 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
         body: JSON.stringify({ resultat }),
       });
       return {
-        ok: true, vins: vins.length, avec_fiche: vins.filter((v: Vin) => v.fiche).length,
+        ok: true, vins: vins.length, avec_fiche: vins.filter((v: Vin) => v.fiche).length, avec_domaine: vins.filter((v: Vin) => v.domaineInfo).length,
         suite: "Dis à l'utilisateur d'ouvrir (ou de revenir sur) l'app Ma Cave : la liste s'affiche pour qu'il vérifie quantités, formats et prix, puis valide.",
       };
     }
