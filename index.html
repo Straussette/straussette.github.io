@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-31.3">
+<meta name="app-version" content="2026-10-31.4">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -461,6 +461,27 @@
       <button type="button" class="link" id="lienMode">Pas encore de compte ? Créer un compte</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="dlgInvitation">
+  <div class="dlg-compte">
+    <h2>🍷 Invitation à une commande groupée</h2>
+    <p id="invitationQuoi">Un ami vous invite à une commande groupée de vin.</p>
+    <p><strong>Comment ça marche</strong></p>
+    <ol class="etapes-claude">
+      <li><strong>Créez votre compte</strong> Ma Cave : e-mail, mot de passe et un pseudo (c'est lui que verront les autres). C'est gratuit et prend une minute.</li>
+      <li><strong>Confirmez votre adresse</strong> avec le lien reçu par e-mail (regardez dans les spams s'il n'arrive pas). Vous revenez alors directement sur la commande.</li>
+      <li><strong>Choisissez vos bouteilles</strong> avec les boutons + et −. Vous pouvez changer d'avis tant que la commande est ouverte.</li>
+      <li><strong>Payez votre part</strong> à l'organisateur par virement : l'app vous indique le montant et ses coordonnées.</li>
+      <li><strong>À la livraison</strong>, vos bouteilles s'ajoutent toutes seules à votre cave dans l'app.</li>
+    </ol>
+    <p class="petit">Ma Cave sert aussi à gérer votre propre cave : photo des étiquettes, quand boire chaque bouteille, quoi ouvrir avec un plat. Rien n'est obligatoire.</p>
+    <div class="actions">
+      <button type="button" class="btn secondary" id="invitationCompte">J'ai déjà un compte</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" id="invitationCreer">Créer mon compte</button>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="dlgClaude">
@@ -4255,17 +4276,55 @@ async function traiterLienCommande() {
   if (!m) return;
   const id = m[1];
   if (!session) {
-    try { sessionStorage.setItem('ma-cave-commande-en-attente', id); } catch {}
+    // Gardée quelques jours : le lien de confirmation de l'e-mail s'ouvre souvent dans un autre onglet
+    try { localStorage.setItem(CLE_COMMANDE_ATTENTE, JSON.stringify({ id, le: Date.now() })); } catch {}
     history.replaceState(null, '', location.pathname + location.search);
-    modeCompte = 'connexion';
-    afficherCompte();
-    compteStatut('Connectez-vous (ou créez un compte) pour rejoindre la commande partagée.');
-    $('#dlgCompte').showModal();
-    return;
+    return montrerInvitation(id);
   }
   history.replaceState(null, '', location.pathname + location.search);
   await rejoindreCommande(id);
 }
+
+/* ---------- Invitation à une commande (sans compte) ---------- */
+const CLE_COMMANDE_ATTENTE = 'ma-cave-commande-en-attente';
+
+function lireCommandeAttente() {
+  let attente = null;
+  try {
+    const t = localStorage.getItem(CLE_COMMANDE_ATTENTE) || sessionStorage.getItem(CLE_COMMANDE_ATTENTE);
+    if (t) attente = t.startsWith('{') ? JSON.parse(t) : { id: t, le: Date.now() };
+    localStorage.removeItem(CLE_COMMANDE_ATTENTE);
+    sessionStorage.removeItem(CLE_COMMANDE_ATTENTE);
+  } catch {}
+  if (!attente || !/^[0-9a-f-]{36}$/i.test(attente.id || '') || Date.now() - attente.le > 7 * 86400_000) return null;
+  return attente.id;
+}
+
+async function montrerInvitation(id) {
+  $('#invitationQuoi').textContent = 'Un ami vous invite à une commande groupée de vin.';
+  $('#dlgInvitation').showModal();
+  try {
+    const c = ((await sbFetch('/rest/v1/rpc/apercu_commande', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd: id }),
+    }, false)) || [])[0];
+    if (!c) { $('#invitationQuoi').textContent = 'Cette commande n\'existe plus. Vous pouvez quand même créer un compte pour gérer votre cave.'; return; }
+    const vins = c.vins ? ` ${c.vins} vin${c.vins > 1 ? 's' : ''} ${c.vins > 1 ? 'sont' : 'est'} déjà proposé${c.vins > 1 ? 's' : ''}.` : '';
+    const fermee = c.statut !== 'ouverte' ? ' Attention : elle n\'est plus ouverte aux choix.' : '';
+    $('#invitationQuoi').textContent = `${c.organisateur} vous invite à la commande « ${c.titre} »${c.fournisseur ? ` chez ${c.fournisseur}` : ''}.${vins}${fermee}`;
+  } catch { /* hors ligne : le texte générique suffit */ }
+}
+
+const ouvrirCompteDepuisInvitation = (mode) => {
+  $('#dlgInvitation').close();
+  modeCompte = mode;
+  afficherCompte();
+  compteStatut(mode === 'inscription'
+    ? 'Après la confirmation de votre adresse, vous reviendrez directement sur la commande.'
+    : 'Connectez-vous pour rejoindre la commande.');
+  $('#dlgCompte').showModal();
+};
+$('#invitationCreer').onclick = () => ouvrirCompteDepuisInvitation('inscription');
+$('#invitationCompte').onclick = () => ouvrirCompteDepuisInvitation('connexion');
 
 async function rejoindreCommande(id) {
   try {
@@ -4346,9 +4405,8 @@ async function apresConnexion() {
   await assurerProfil();
   completerEnFond();
   await majOnglets();
-  let attente = null;
-  try { attente = sessionStorage.getItem('ma-cave-commande-en-attente'); sessionStorage.removeItem('ma-cave-commande-en-attente'); } catch {}
-  if (attente && session) { $('#dlgCompte').close(); await rejoindreCommande(attente); }
+  const attente = session ? lireCommandeAttente() : null;
+  if (attente) { $('#dlgCompte').close(); await rejoindreCommande(attente); }
   else if (session) chargerCommandes({ silencieux: true });
 }
 window.addEventListener('hashchange', () => { if (/commande=/.test(location.hash)) traiterLienCommande(); });
