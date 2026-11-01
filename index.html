@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-01.2">
+<meta name="app-version" content="2026-11-01.3">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -3289,6 +3289,7 @@ async function verifierPropositions() {
       cmdId: imp.commande_id, importId: imp.id, fournisseur: r.fournisseur || '',
       remarques: `📥 Lu par votre Claude : vérifiez les prix, décochez ce qui ne vous intéresse pas, puis ajoutez à la commande.${r.remarques ? ' ' + r.remarques : ''}`,
       vins: r.vins.map((v) => ({ ...v, prix: Number(v.prix) || null, coche: true })),
+      synthese: r.synthese?.enBref ? r.synthese : null,
     };
     changerVue('commandes');
     await chargerCommandes({ silencieux: true });
@@ -3725,6 +3726,8 @@ function afficherCommande() {
         : `<p class="petit">${jeSuisOrga ? 'Ajoutez votre IBAN ou votre Lydia avec « ✏️ Infos » pour que vos amis puissent vous rembourser.' : 'L\'organisateur n\'a pas encore indiqué ses coordonnées de paiement.'}</p>`}
     </section>
 
+    ${syntheseCommandeHTML(c)}
+
     <section>
       <h3>Vins (${c.commande_vins.length})</h3>
       ${c.commande_vins.length ? '' : '<p class="petit">Aucun vin pour l\'instant.</p>'}
@@ -3741,7 +3744,11 @@ function afficherCommande() {
           <div class="ligne">
             <div>
               <button type="button" class="link nom-vin-cmd" data-act="ficheVin">${esc(nomVin(v.data))} ${ficheVinCommande(v) ? '📄' : ''}</button>
-              ${(() => { const cmp = comparerPrix(v, ficheVinCommande(v)); return cmp ? `<div><span class="pastille ${cmp.cls}">${esc(cmp.court)}</span></div>` : ''; })()}
+              ${(() => {
+                const cmp = comparerPrix(v, ficheVinCommande(v));
+                const note = noteAvis(v);
+                return cmp || note ? `<div>${note ? `<span class="pastille p-neutre" title="${esc(v.data.avis.verdict || '')}">★ ${esc(note)}</span> ` : ''}${cmp ? `<span class="pastille ${cmp.cls}">${esc(cmp.court)}</span>` : ''}</div>` : '';
+              })()}
             </div>
             ${jeSuisOrga
               ? `<label class="petit">Prix <input class="prix-input" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(v.prix) || ''}" data-act="prix"> €</label>`
@@ -3997,6 +4004,42 @@ function etatCaisses(total, caisse) {
     : `${txt} · ✓ caisses complètes`;
 }
 
+/* ---------- Synthèse d'une commande ---------- */
+// Note sur 20 donnée par Claude à un vin de la commande (« 16,5/20 »), ou ''
+function noteAvis(v) {
+  const n = Number(v.data?.avis?.note);
+  return v.data?.avis && isFinite(n) ? `${String(n).replace('.', ',')}/20` : '';
+}
+
+const aUneSynthese = (c) => !!c.synthese?.enBref;
+
+// Bloc en tête de la commande : la synthèse de l'offre, ou le bouton pour la faire faire par son Claude
+function syntheseCommandeHTML(c) {
+  if (!c.commande_vins.length) return '';
+  if (!aUneSynthese(c)) {
+    if (!claudeParDefaut()) return '';
+    return `<section>
+      <h3>Synthèse de l'offre</h3>
+      <p class="petit">Pas encore de synthèse : votre Claude peut résumer l'offre, la comparer au marché et noter chaque vin sur 20.</p>
+      <div><button type="button" class="btn primary petit-btn" data-act="syntheseClaude">🤖 Générer la synthèse avec mon Claude</button></div>
+    </section>`;
+  }
+  const s = c.synthese;
+  return `<section>
+    <h3>Synthèse de l'offre</h3>
+    <div class="fiche">
+      ${s.enBref.split(/\n+/).filter(Boolean).map((p) => `<p>${esc(p)}</p>`).join('')}
+      ${s.aVerifier?.length ? `<div><h3>À vérifier</h3><ul>${s.aVerifier.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+      ${/^https?:\/\//.test(s.lien || '') ? `<a href="${esc(s.lien)}" target="_blank" rel="noopener">📄 Fiche de synthèse complète</a>` : ''}
+      <p class="petit">Notes sur 20 et avis de Claude (réputation, critiques, rapport qualité-prix), sans dégustation : touchez un vin pour lire son avis.</p>
+    </div>
+  </section>`;
+}
+
+function messageSyntheseCommande(c) {
+  return `Dans Ma Cave, fais la synthèse de l'offre de la commande groupée « ${c.titre} » (commande_id ${c.id}), avec le skill offre-caviste-ma-cave si tu l'as. Liste les vins avec vins_commande, complète par des recherches web ce qui manque (domaine, prix du marché, critiques), puis donne à chaque vin une note sur 20 et un verdict franc en une phrase. Fais une fiche de synthèse à partager avec les participants (remises, prix du marché, notes et avis), puis enregistre le tout avec enregistrer_synthese_commande (en_bref, a_verifier, lien de la fiche, avis par vin_id).`;
+}
+
 /* ---------- Fiches des vins d'une commande ---------- */
 // Fiche d'un vin proposé : celle écrite dans la commande (par le Claude d'un participant), sinon celle du catalogue partagé
 let fichesCommande = { cmdId: null, vins: new Map(), domaines: new Map() };
@@ -4079,6 +4122,7 @@ function ouvrirFicheCommande(c, v) {
     <h2>${esc(nomVin(d))}</h2>
     <div class="petit">Proposé à ${fmtEuro(Number(v.prix) || 0)} la bouteille dans « ${esc(c.titre)} »</div>
     ${cmp ? `<div class="comparaison-prix"><span class="pastille ${cmp.cls}" style="justify-self:start">${esc(cmp.court)}</span><span class="petit">${esc(cmp.long)}</span></div>` : ''}
+    ${noteAvis(v) ? `<div class="comparaison-prix"><span class="pastille p-neutre" style="justify-self:start">★ ${esc(noteAvis(v))}</span><span class="petit">${esc(d.avis.verdict || '')}</span></div>` : ''}
     ${f ? `<div class="fiche">${htmlFiche({ ...f, domaineInfo, domaineSite })}</div>`
       : `<p class="petit">Pas encore de fiche pour ce vin.</p>
          <div class="actions" style="margin:0; flex-wrap:wrap">
@@ -4118,7 +4162,7 @@ async function propaleViaClaude(fichiers, c) {
   try {
     st('Envoi de l\'offre…', false, true);
     const id = await deposerPourClaude(fichiers, 'commande', c.id);
-    propaleClaude = { cmdId: c.id, message: `Dans Ma Cave, traite l'import ${id} : c'est l'offre du caviste pour ma commande groupée « ${c.titre} ». Lis-la avec lire_import (vins, prix TTC par bouteille, tailles de caisse), cherche la fiche de chaque vin avec son prix du marché et présente chaque domaine, puis envoie le tout avec proposer_vins : je validerai dans l'app. Fais ensuite une fiche de synthèse de l'offre à partager avec les participants (remises, prix du marché, note sur 20 et avis sur chaque vin), avec le skill offre-caviste-ma-cave si tu l'as.` };
+    propaleClaude = { cmdId: c.id, message: `Dans Ma Cave, traite l'import ${id} : c'est l'offre du caviste pour ma commande groupée « ${c.titre} ». Lis-la avec lire_import (vins, prix TTC par bouteille, tailles de caisse), cherche la fiche de chaque vin avec son prix du marché et présente chaque domaine, et donne à chaque vin une note sur 20 et un verdict. Fais une fiche de synthèse de l'offre à partager avec les participants (remises, prix du marché, notes et avis), avec le skill offre-caviste-ma-cave si tu l'as, puis envoie le tout avec proposer_vins (note et verdict par vin, synthese avec le lien de la fiche) : je validerai dans l'app.` };
     afficherCommande();
     st('✓ Offre envoyée. Ouvrez Claude : il la lira et cherchera les fiches. Revenez ensuite ici pour vérifier la liste et l\'ajouter à la commande.');
   } catch (err) { st('Envoi impossible : ' + err.message, true); }
@@ -4146,6 +4190,7 @@ function propaleHTML(c) {
               ${v.remarque ? `<span>${esc(v.remarque)}</span>` : ''}
               ${v.fiche ? '<span>📄 fiche prête</span>' : ''}
               ${v.domaineInfo ? '<span>🏡 domaine présenté</span>' : ''}
+              ${v.avis ? `<span>★ ${esc(String(v.avis.note).replace('.', ','))}/20</span>` : ''}
             </div>
           </div>
         </li>`).join('')}
@@ -4348,6 +4393,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
   }
   if (act === 'ficheVin') return ouvrirFicheCommande(c, c.commande_vins.find((x) => x.id === vinId));
   if (act === 'fichesClaude') return ouvrirDansClaude(messageFichesCommande(c));
+  if (act === 'syntheseClaude') return ouvrirDansClaude(messageSyntheseCommande(c));
   if (act === 'fichesDemander') {
     const liste = c.commande_vins.filter((v) => !ficheVinCommande(v) && cleCatalogue(v.data || {})).map((v) => ({ ...v.data }));
     const domaines = c.commande_vins.filter((v) => v.data?.domaine && !domainePresente(c, v)).map((v) => ({ ...v.data }));
@@ -4384,15 +4430,19 @@ $('#cmdContenu').addEventListener('click', async (e) => {
         ...(Number(v.caisse) > 1 ? { caisse: Number(v.caisse) } : {}),
         ...(v.fiche?.description ? { fiche: { ...v.fiche, ...Object.fromEntries(['region', 'boireDe', 'boireA'].filter((k) => v[k]).map((k) => [k, v[k]])) } } : {}),
         ...(v.domaineInfo ? { domaineInfo: v.domaineInfo, domaineSite: v.domaineSite || '' } : {}),
+        ...(v.avis?.verdict ? { avis: v.avis } : {}),
       },
     }));
     const fournisseur = propale.fournisseur;
     const importId = propale.importId;
+    const synthese = propale.synthese;
     propale = null;
     return actionCommande(async () => {
       await jsonPost('/rest/v1/commande_vins', lignes);
       if (importId) terminerImport(importId);
       if (fournisseur && !c.fournisseur) await jsonPatch(`/rest/v1/commandes?id=eq.${c.id}`, { fournisseur });
+      // Synthèse de l'offre faite par Claude : gardée sur la commande si elle n'en a pas encore (seul l'organisateur peut l'écrire)
+      if (synthese && !aUneSynthese(c)) { try { await jsonPatch(`/rest/v1/commandes?id=eq.${c.id}`, { synthese: { ...synthese, auteur: moi() } }); } catch {} }
       cmdStatut(`✓ ${lignes.length} vin${lignes.length > 1 ? 's' : ''} ajouté${lignes.length > 1 ? 's' : ''} à la commande.`);
     });
   }

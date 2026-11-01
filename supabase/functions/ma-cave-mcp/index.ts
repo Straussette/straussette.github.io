@@ -24,7 +24,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Quand il dit avoir ouvert ou bu une bouteille, utilise ouvrir_bouteille (stock −1, date notée dans « Dégustées »), avec sa note s'il en donne une. Pour une simple correction de stock, utilise modifier_bouteille.
 - Pour ajouter des vins (facture, liste, photo d'étiquette), utilise ajouter_vins ; un vin déjà présent (même domaine, cuvée, appellation, millésime et format) voit sa quantité augmenter.
 - Photos et listes envoyées depuis l'app (imports) : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Pour chaque vin, fais aussi une recherche web pour sa fiche (description, cépages, accords, service, apogée, fenêtre boireDe/boireA, prix du marché, sources) ; si la liste est longue, fais au mieux et laisse sans fiche ce que tu n'as pas trouvé. Présente aussi chaque domaine qui ne l'est pas encore dans sa cave (ma_cave indique domaine_presente) : histoire, vignoble, viticulture, style, cuvées phares, dans domaineInfo et domaineSite (une seule fois par domaine suffit). N'ajoute PAS toi-même ces vins (ni ajouter_vins, ni ajouter_vins_commande) : envoie ta lecture avec proposer_vins, puis dis à l'utilisateur d'ouvrir l'app Ma Cave, où il vérifie les quantités et les formats et valide l'ajout.
-- Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé), et enregistrer_domaine_commande présente chaque domaine qui ne l'est pas encore (histoire, vignoble, style, cuvées phares) : tous les participants les voient en touchant le vin dans la commande.
+- Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé), et enregistrer_domaine_commande présente chaque domaine qui ne l'est pas encore (histoire, vignoble, style, cuvées phares) : tous les participants les voient en touchant le vin dans la commande. Pour une offre de caviste, donne aussi ta note sur 20 et un verdict franc par vin (note, verdict dans proposer_vins) et une synthèse (synthese : en_bref, a_verifier, lien) ; pour une commande déjà créée, enregistre-les avec enregistrer_synthese_commande. Les notes combinent réputation du climat, critiques et rapport qualité-prix : dis que ce n'est pas une dégustation.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
 // ---------- Supabase (clé secrète du projet) ----------
@@ -285,6 +285,17 @@ function resume(b: Vin) {
 // ---------- Outils ----------
 
 const texte = { type: "string" };
+// Synthèse d'une offre de commande groupée (affichée en tête de la commande dans l'app)
+const SCHEMA_SYNTHESE = {
+  type: "object",
+  description: "Synthèse de l'offre pour les participants",
+  properties: {
+    en_bref: { ...texte, description: "L'essentiel en 3 à 6 phrases : remise et écart au marché, le domaine en une phrase, les vins à prendre en priorité" },
+    a_verifier: { type: "array", maxItems: 10, items: texte, description: "Points à vérifier avant de commander (caisses, millésimes, livraison…)" },
+    lien: { ...texte, description: "Lien de la fiche de synthèse complète (document partagé), s'il existe" },
+  },
+  required: ["en_bref"],
+};
 const entier = { type: "integer" };
 const CHAMPS_FICHE_SCHEMA = {
   region: { ...texte, description: "Région, ex. « Bourgogne (Côte de Beaune) »" },
@@ -494,11 +505,14 @@ const OUTILS = [
               emplacement: texte, notes: texte,
               domaineInfo: { ...texte, description: "Présentation du domaine (5 à 8 phrases), s'il n'est pas déjà présenté dans la cave" },
               domaineSite: { ...texte, description: "Site officiel du domaine" },
+              note: { type: "number", minimum: 0, maximum: 20, description: "Offre : ta note sur 20 (réputation du climat, critiques, rapport qualité-prix)" },
+              verdict: { ...texte, description: "Offre : ton avis en une phrase franche (à prendre, coincé en prix…)" },
               ...CHAMPS_FICHE_SCHEMA,
             },
             required: ["domaine", "appellation"],
           },
         },
+        synthese: SCHEMA_SYNTHESE,
       },
       required: ["id", "vins"],
     },
@@ -580,6 +594,33 @@ const OUTILS = [
     annotations: { title: "Domaine d'une commande", readOnlyHint: false, destructiveHint: false },
   },
   {
+    name: "enregistrer_synthese_commande",
+    description: "Enregistre la synthèse d'une commande groupée (organisée ou rejointe), visible par tous les participants : l'essentiel de l'offre, les points à vérifier, le lien d'une fiche complète, et ta note sur 20 avec un avis pour chaque vin (vin_id de vins_commande).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        commande_id: texte,
+        synthese: SCHEMA_SYNTHESE,
+        avis: {
+          type: "array",
+          maxItems: 300,
+          items: {
+            type: "object",
+            properties: {
+              vin_id: texte,
+              note: { type: "number", minimum: 0, maximum: 20, description: "Note sur 20" },
+              verdict: { ...texte, description: "Avis en une phrase franche" },
+            },
+            required: ["vin_id", "note", "verdict"],
+          },
+        },
+        remplacer: { type: "boolean", description: "Remplacer une synthèse ou des avis déjà là" },
+      },
+      required: ["commande_id", "synthese", "avis"],
+    },
+    annotations: { title: "Synthèse d'une commande", readOnlyHint: false, destructiveHint: false },
+  },
+  {
     name: "degustees",
     description: "Journal des bouteilles bues (dates d'ouverture), le plus récent d'abord, avec les notes de dégustation.",
     inputSchema: { type: "object", properties: { depuis: { ...texte, description: "Date de début (AAAA-MM-JJ)" } } },
@@ -590,6 +631,20 @@ const OUTILS = [
 // Fiche venant de Claude : types forcés et longueurs bornées (elle peut aller au catalogue partagé)
 const borne = (x: unknown, n: number) => String(x ?? "").trim().slice(0, n);
 const estUrl = (x: unknown) => /^https?:\/\/\S+$/.test(String(x || ""));
+// Avis de Claude sur un vin d'une offre : note sur 20 (au demi-point) et verdict en une phrase
+function nettoyerAvis(a: Vin): Vin | null {
+  const note = Number(a?.note);
+  const verdict = borne(a?.verdict, 300);
+  if (vide(a?.note) || !isFinite(note) || note < 0 || note > 20 || !verdict) return null;
+  return { note: Math.round(note * 2) / 2, verdict };
+}
+// Synthèse d'une offre : l'essentiel, les points à vérifier, le lien d'une fiche complète
+function nettoyerSynthese(s: Vin): Vin | null {
+  const enBref = borne(s?.en_bref, 2000);
+  if (enBref.length < 40) return null;
+  const aVerifier = (Array.isArray(s?.a_verifier) ? s.a_verifier : []).map((x: unknown) => borne(x, 300)).filter(Boolean).slice(0, 10);
+  return { enBref, aVerifier, lien: estUrl(s?.lien) ? borne(s.lien, 500) : "", le: new Date().toISOString() };
+}
 function nettoyerFiche(a: Vin): Vin {
   const f: Vin = {};
   for (const k of ["region", "pays", "classement"]) if (!vide(a[k])) f[k] = borne(a[k], 120);
@@ -872,9 +927,12 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
         if (fiche.description) r.fiche = fiche;
         const presentation = borne(v.domaineInfo, 3000);
         if (presentation.length >= 80) { r.domaineInfo = presentation; r.domaineSite = estUrl(v.domaineSite) ? borne(v.domaineSite, 300) : ""; }
+        const avis = imp.but === "commande" ? nettoyerAvis(v) : null;
+        if (avis) r.avis = avis;
         return r;
       });
-      const resultat = { vins, fournisseur: borne(a.fournisseur, 150), remarques: borne(a.remarques, 600), le: new Date().toISOString() };
+      const synthese = imp.but === "commande" ? nettoyerSynthese(a.synthese) : null;
+      const resultat = { vins, fournisseur: borne(a.fournisseur, 150), remarques: borne(a.remarques, 600), ...(synthese ? { synthese } : {}), le: new Date().toISOString() };
       await sb(`/rest/v1/imports?user_id=eq.${uid}&id=eq.${imp.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
@@ -882,6 +940,7 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       });
       return {
         ok: true, vins: vins.length, avec_fiche: vins.filter((v: Vin) => v.fiche).length, avec_domaine: vins.filter((v: Vin) => v.domaineInfo).length,
+        ...(imp.but === "commande" ? { avec_avis: vins.filter((v: Vin) => v.avis).length, synthese: !!synthese } : {}),
         suite: "Dis à l'utilisateur d'ouvrir (ou de revenir sur) l'app Ma Cave : la liste s'affiche pour qu'il vérifie quantités, formats et prix, puis valide.",
       };
     }
@@ -958,7 +1017,42 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
         vins: vins.map((v: any) => ({
           vin_id: v.id, vin: nomVin(v.data || {}), prix_propose_eur: Number(v.prix) || undefined,
           fiche: !!(v.data?.fiche?.description || v.data?.description), domaine_presente: !!(v.data?.domaineInfo || v.data?.fiche?.domaineInfo),
+          note: v.data?.avis?.note ?? undefined,
         })),
+      };
+    }
+
+    case "enregistrer_synthese_commande": {
+      const c = await commandeVisible(uid, a.commande_id);
+      const synthese = nettoyerSynthese(a.synthese);
+      if (!synthese) throw new Error("synthèse trop courte : en_bref doit résumer l'offre en quelques phrases");
+      const existante = (await sb(`/rest/v1/commandes?select=synthese&id=eq.${c.id}`))?.[0]?.synthese;
+      const ecrireSynthese = !existante?.enBref || !!a.remplacer;
+      if (ecrireSynthese) {
+        await sb(`/rest/v1/commandes?id=eq.${c.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ synthese: { ...synthese, auteur: uid } }),
+        });
+      }
+      const vins = await sb(`/rest/v1/commande_vins?select=id,data&commande_id=eq.${c.id}`) || [];
+      const parId = new Map(vins.map((v: any) => [v.id, v]));
+      let notes = 0, inconnus = 0, deja = 0;
+      for (const x of (Array.isArray(a.avis) ? a.avis : []).slice(0, 300)) {
+        const v: any = parId.get(String(x?.vin_id || ""));
+        const avis = nettoyerAvis(x);
+        if (!v || !avis) { inconnus++; continue; }
+        if (v.data?.avis && !a.remplacer) { deja++; continue; }
+        await sb(`/rest/v1/commande_vins?id=eq.${v.id}&commande_id=eq.${c.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ data: { ...(v.data || {}), avis: { ...avis, le: synthese.le } } }),
+        });
+        notes++;
+      }
+      return {
+        ok: true, commande: c.titre, synthese: ecrireSynthese ? "enregistrée" : "déjà là : rien changé (utilise remplacer pour la refaire)",
+        vins_notes: notes, deja_notes: deja || undefined, ignores: inconnus || undefined,
       };
     }
 
