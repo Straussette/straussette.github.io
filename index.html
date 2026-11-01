@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-10-31.8">
+<meta name="app-version" content="2026-11-01.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -4041,10 +4041,17 @@ function messageFichesCommande(c, v = null) {
     : `Dans Ma Cave, crée les fiches des vins de la commande groupée « ${c.titre} » (commande_id ${c.id}) qui n'en ont pas encore : liste-les avec vins_commande, cherche chacun sur le web (description, cépages, accords, apogée, fenêtre de dégustation, prix du marché, avec tes sources) et enregistre chaque fiche avec enregistrer_fiche_commande. Présente aussi chaque domaine qui ne l'est pas encore (enregistrer_domaine_commande). Puis résume-moi les bonnes affaires par rapport aux prix proposés.`;
 }
 
+// Autre vin de la commande, du même domaine, qui porte déjà sa présentation (Claude ne présente un domaine qu'une fois)
+const frereAvecDomaine = (c, v) => {
+  const cle = cleDomaine(v.data?.domaine || '');
+  if (!cle) return null;
+  return c.commande_vins.find((x) => x.data?.domaineInfo && memeDomaine(cleDomaine(x.data.domaine || ''), cle)) || null;
+};
+
 // Domaine d'un vin de commande déjà présenté (dans la commande, sa fiche ou le catalogue) ?
 const domainePresente = (c, v) => {
   const d = v.data || {};
-  return !!(d.domaineInfo || ficheVinCommande(v)?.domaineInfo || (fichesCommande.cmdId === c.id && fichesCommande.domaines.get(cleDomaine(d.domaine))));
+  return !!(d.domaineInfo || ficheVinCommande(v)?.domaineInfo || frereAvecDomaine(c, v) || (fichesCommande.cmdId === c.id && fichesCommande.domaines.get(cleDomaine(d.domaine))));
 };
 
 function boutonsFichesCommande(c) {
@@ -4063,9 +4070,10 @@ function ouvrirFicheCommande(c, v) {
   const f = ficheVinCommande(v);
   const d = v.data || {};
   const domCatalogue = fichesCommande.cmdId === c.id ? fichesCommande.domaines.get(cleDomaine(d.domaine)) : null;
-  // Présentation du domaine : écrite dans la commande (Claude d'un participant), sinon celle de la fiche ou du catalogue
-  const domaineInfo = d.domaineInfo || f?.domaineInfo || domCatalogue?.presentation || '';
-  const domaineSite = d.domaineInfo ? (d.domaineSite || '') : (f?.domaineSite || domCatalogue?.site || '');
+  const frere = d.domaineInfo ? null : frereAvecDomaine(c, v)?.data;
+  // Présentation du domaine : écrite dans la commande (pour ce vin ou un autre du même domaine), sinon celle de la fiche ou du catalogue
+  const domaineInfo = d.domaineInfo || frere?.domaineInfo || f?.domaineInfo || domCatalogue?.presentation || '';
+  const domaineSite = d.domaineInfo ? (d.domaineSite || '') : frere ? (frere.domaineSite || '') : (f?.domaineSite || domCatalogue?.site || '');
   const cmp = comparerPrix(v, f);
   $('#ficheCmdContenu').innerHTML = `
     <h2>${esc(nomVin(d))}</h2>
@@ -4358,6 +4366,12 @@ $('#cmdContenu').addEventListener('click', async (e) => {
   if (act === 'propaleAjouter') {
     const choisis = propale.vins.filter((v) => v.coche && (v.domaine || v.appellation));
     if (!choisis.length) return;
+    // Claude présente chaque domaine une seule fois : la présentation vaut pour tous les vins de ce domaine dans l'offre
+    for (const v of choisis) {
+      if (v.domaineInfo) continue;
+      const frere = propale.vins.find((x) => x.domaineInfo && memeDomaine(cleDomaine(x.domaine || ''), cleDomaine(v.domaine || '')));
+      if (frere) { v.domaineInfo = frere.domaineInfo; v.domaineSite = frere.domaineSite; }
+    }
     const lignes = choisis.map((v) => ({
       commande_id: c.id,
       prix: Math.max(0, Number(v.prix) || 0),
