@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-01.3">
+<meta name="app-version" content="2026-11-01.4">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -2582,6 +2582,18 @@ function ouvrirAjout() {
   $('#dlgLot').showModal();
 };
 $('#lotClose').onclick = () => $('#dlgLot').close();
+// Lecture de Claude fermée sans être ajoutée : sinon elle se rouvre à chaque démarrage de l'app
+$('#dlgLot').addEventListener('close', () => {
+  if (!lotImportId || lotOccupe) return;
+  const restants = lot.filter((v) => !v.etat).length;
+  if (!restants) return;
+  if (!confirm(`Abandonner ${restants > 1 ? `les ${restants} vins lus` : 'le vin lu'} par votre Claude et pas encore ajouté${restants > 1 ? 's' : ''} ?\n\nOK : abandonner (ils ne reviendront plus).\nAnnuler : les garder pour la prochaine ouverture de l'app.`)) return;
+  terminerImport(lotImportId);
+  lotImportId = null;
+  lot = [];
+  afficherLot();
+  toast('Lecture de Claude abandonnée.');
+});
 $('#lotDemander').onclick = async () => {
   try {
     lotStatut('Envoi des demandes…', false, true);
@@ -3326,7 +3338,7 @@ async function terminerImport(id) {
     await jsonPatch(`/rest/v1/imports?id=eq.${id}`, { statut: 'traite', traite: new Date().toISOString() });
   } catch {
     // Sinon la même lecture reviendrait à la prochaine ouverture (et doublerait les quantités)
-    toast('⚠️ Vins ajoutés, mais la lecture de Claude n\'a pas pu être close : si elle revient, fermez-la sans l\'ajouter.', 6000);
+    toast('⚠️ La lecture de Claude n\'a pas pu être close : si elle revient, fermez-la et abandonnez-la.', 6000);
     return;
   }
   try {
@@ -4408,7 +4420,12 @@ $('#cmdContenu').addEventListener('click', async (e) => {
     } catch (err) { cmdStatut('Échec : ' + err.message, true); }
     return;
   }
-  if (act === 'propaleAnnuler') { propale = null; return afficherCommande(); }
+  if (act === 'propaleAnnuler') {
+    // Import de Claude abandonné : clos, pour qu'il ne se rouvre pas au prochain démarrage
+    if (propale?.importId) terminerImport(propale.importId);
+    propale = null;
+    return afficherCommande();
+  }
   if (act === 'propaleAjouter') {
     const choisis = propale.vins.filter((v) => v.coche && (v.domaine || v.appellation));
     if (!choisis.length) return;
