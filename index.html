@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-01.4">
+<meta name="app-version" content="2026-11-02.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -4028,6 +4028,7 @@ const aUneSynthese = (c) => !!c.synthese?.enBref;
 // Bloc en tête de la commande : la synthèse de l'offre, ou le bouton pour la faire faire par son Claude
 function syntheseCommandeHTML(c) {
   if (!c.commande_vins.length) return '';
+  if (aUneSynthese(c)) chargerJsPDF().catch(() => {}); // préchargé : le partage doit suivre le geste de l'utilisateur
   if (!aUneSynthese(c)) {
     if (!claudeParDefaut()) return '';
     return `<section>
@@ -4045,7 +4046,117 @@ function syntheseCommandeHTML(c) {
       ${/^https?:\/\//.test(s.lien || '') ? `<a href="${esc(s.lien)}" target="_blank" rel="noopener">📄 Fiche de synthèse complète</a>` : ''}
       <p class="petit">Notes sur 20 et avis de Claude (réputation, critiques, rapport qualité-prix), sans dégustation : touchez un vin pour lire son avis.</p>
     </div>
+    <div class="actions" style="margin:0"><button type="button" class="btn secondary petit-btn" data-act="syntheseWhatsApp">📤 Envoyer sur WhatsApp (PDF)</button></div>
   </section>`;
+}
+
+/* ---------- Synthèse en PDF, à envoyer sur WhatsApp ---------- */
+let jspdfPromesse = null;
+function chargerJsPDF() {
+  // Bibliothèque PDF (et ses tableaux), chargée seulement si une synthèse est affichée
+  const script = (src) => new Promise((ok, ko) => {
+    const sc = document.createElement('script');
+    sc.src = src;
+    sc.onload = ok;
+    sc.onerror = () => ko(new Error('générateur de PDF indisponible'));
+    document.head.appendChild(sc);
+  });
+  jspdfPromesse ??= script('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js')
+    .then(() => script('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js'))
+    .then(() => window.jspdf.jsPDF)
+    .catch((e) => { jspdfPromesse = null; throw e; });
+  return jspdfPromesse;
+}
+
+// Les polices de base du PDF ne couvrent que le latin de base (accents compris) : €, guillemets courbes, émojis… sont remplacés ou retirés
+const textePDF = (t) => String(t ?? '')
+  .replace(/[\u00a0\u202f\u2009]/g, ' ')
+  .replace(/€/g, 'EUR').replace(/œ/g, 'oe').replace(/Œ/g, 'OE')
+  .replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/…/g, '...').replace(/[★•]/g, '*')
+  .replace(/[^\x09\x0a\x0d\x20-\x7e\u00a0-\u00ff]/g, '')
+  .replace(/ {2,}/g, ' ').replace(/ ([.,])/g, '$1').trim();
+const nomFichierPDF = (c) => 'Synthese - ' + sansAccent(c.titre).replace(/[^\w -]+/g, '').trim().slice(0, 60) + '.pdf';
+
+// Couleur d'accent du thème (variable --accent) en [r, v, b], pour l'en-tête du tableau
+function couleurAccentRVB() {
+  const hex = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  return m ? m.slice(1).map((x) => parseInt(x, 16)) : [90, 90, 90];
+}
+
+function pdfSynthese(c, JsPDF) {
+  const s = c.synthese;
+  const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+  const marge = 14, largeur = 210 - 2 * marge;
+  let y = 18;
+  const ligne = (texte, { taille = 10, gras = false, couleur = 30, espace = 1.5 } = {}) => {
+    doc.setFont('helvetica', gras ? 'bold' : 'normal');
+    doc.setFontSize(taille);
+    doc.setTextColor(couleur);
+    for (const l of doc.splitTextToSize(textePDF(texte), largeur)) {
+      if (y > 282) { doc.addPage(); y = 18; }
+      doc.text(l, marge, y);
+      y += taille * 0.45;
+    }
+    y += espace;
+  };
+  ligne(c.titre, { taille: 17, gras: true, espace: 1 });
+  ligne([c.fournisseur, fmtDate(c.date_commande)].filter(Boolean).join(' · ') || 'Commande groupée', { taille: 10, couleur: 110, espace: 5 });
+  ligne('En bref', { taille: 12, gras: true });
+  for (const p of s.enBref.split(/\n+/).filter(Boolean)) ligne(p, { espace: 2.5 });
+  if (s.aVerifier?.length) {
+    y += 2;
+    ligne('À vérifier', { taille: 12, gras: true });
+    for (const x of s.aVerifier) ligne('- ' + x, { espace: 1 });
+  }
+  y += 4;
+  ligne('Les vins', { taille: 12, gras: true, espace: 2 });
+  const corps = c.commande_vins.map((v) => {
+    const cmp = comparerPrix(v, ficheVinCommande(v));
+    const caisse = Number(v.data?.caisse) > 1 ? ` (caisse de ${v.data.caisse})` : '';
+    return [
+      textePDF(nomVin(v.data || {}) + caisse),
+      textePDF(fmtEur(v.prix)),
+      textePDF(cmp ? cmp.court.replace(/^👍\s*/, '') : ''),
+      textePDF(noteAvis(v)),
+      textePDF(v.data?.avis?.verdict || ''),
+    ];
+  });
+  doc.autoTable({
+    startY: y,
+    head: [['Vin', 'Prix', 'Vs marché', 'Note', 'Avis de Claude']],
+    body: corps,
+    margin: { left: marge, right: marge },
+    styles: { fontSize: 8, cellPadding: 1.6, valign: 'top' },
+    headStyles: { fillColor: couleurAccentRVB() },
+    columnStyles: { 0: { cellWidth: 52 }, 1: { cellWidth: 16, halign: 'right' }, 2: { cellWidth: 22 }, 3: { cellWidth: 13 } },
+  });
+  y = doc.lastAutoTable.finalY + 6;
+  ligne('Notes et avis de Claude d\'après la réputation, les critiques et le rapport qualité-prix, sans dégustation. Prix du marché ajusté au format.', { taille: 8, couleur: 110 });
+  ligne('Rejoindre la commande et choisir ses bouteilles : ' + lienCommande(c.id), { taille: 8, couleur: 110 });
+  return new File([doc.output('blob')], nomFichierPDF(c), { type: 'application/pdf' });
+}
+
+async function envoyerSyntheseWhatsApp(c) {
+  const texte = `Synthèse de la commande « ${c.titre} » : notes et avis sur chaque vin. Pour choisir tes bouteilles : ${lienCommande(c.id)}`;
+  let fichier;
+  try {
+    fichier = pdfSynthese(c, await chargerJsPDF());
+  } catch (err) { return cmdStatut('PDF impossible : ' + err.message, true); }
+  // Téléphone : menu de partage avec le PDF joint (on y choisit WhatsApp et le groupe)
+  if (navigator.canShare?.({ files: [fichier] })) {
+    try { await navigator.share({ files: [fichier], title: c.titre, text: texte }); return; }
+    catch (err) { if (err.name === 'AbortError') return; /* partage refusé : on passe au téléchargement */ }
+  }
+  // Ordinateur : PDF téléchargé, puis WhatsApp avec le message ; il reste à y glisser le PDF
+  const url = URL.createObjectURL(fichier);
+  const a = Object.assign(document.createElement('a'), { href: url, download: fichier.name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  const w = window.open('https://wa.me/?text=' + encodeURIComponent(texte), '_blank');
+  if (w) w.opener = null;
+  cmdStatut(w ? '✓ PDF téléchargé. Dans WhatsApp, choisissez le groupe, puis glissez-y le PDF.'
+    : '✓ PDF téléchargé. Ouvrez WhatsApp, choisissez le groupe, puis glissez-y le PDF.');
 }
 
 function messageSyntheseCommande(c) {
@@ -4406,6 +4517,7 @@ $('#cmdContenu').addEventListener('click', async (e) => {
   if (act === 'ficheVin') return ouvrirFicheCommande(c, c.commande_vins.find((x) => x.id === vinId));
   if (act === 'fichesClaude') return ouvrirDansClaude(messageFichesCommande(c));
   if (act === 'syntheseClaude') return ouvrirDansClaude(messageSyntheseCommande(c));
+  if (act === 'syntheseWhatsApp') return envoyerSyntheseWhatsApp(c);
   if (act === 'fichesDemander') {
     const liste = c.commande_vins.filter((v) => !ficheVinCommande(v) && cleCatalogue(v.data || {})).map((v) => ({ ...v.data }));
     const domaines = c.commande_vins.filter((v) => v.data?.domaine && !domainePresente(c, v)).map((v) => ({ ...v.data }));
