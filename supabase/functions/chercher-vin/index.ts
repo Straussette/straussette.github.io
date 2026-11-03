@@ -4,7 +4,8 @@
 // La clé API est lue dans le secret ANTHROPIC_API_KEY (jamais dans le code).
 
 const ORIGINES_AUTORISEES = [
-  "https://straussette.github.io",
+  "https://macave.pstrauss.org",
+  "https://straussette.github.io", // ancienne adresse, gardée pendant la transition
 ];
 
 const MODELE = "claude-sonnet-5-5";

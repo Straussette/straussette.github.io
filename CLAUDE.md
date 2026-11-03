@@ -4,12 +4,14 @@ Ce fichier guide Claude Code (claude.ai/code) lorsqu'il travaille sur le code de
 
 ## Projet
 
-**Ma Cave** : application web de gestion de cave à vin, en français, installable comme une app. Elle est hébergée par GitHub Pages à l'adresse https://straussette.github.io. Le texte de l'interface, les noms dans le code, les commentaires et les messages de commit sont en français : il faut garder cette règle.
+**Ma Cave** : application web de gestion de cave à vin, en français, installable comme une app. Elle est hébergée par GitHub Pages à l'adresse https://macave.pstrauss.org (domaine `pstrauss.org` chez Cloudflare, fichier `CNAME` ; l'ancienne adresse https://straussette.github.io y redirige). Le texte de l'interface, les noms dans le code, les commentaires et les messages de commit sont en français : il faut garder cette règle.
 
 Le dépôt contient trois fichiers de code :
 - `index.html` : toute l'application côté navigateur (HTML + CSS + JavaScript sans framework, sans dépendance, sans étape de build).
 - `supabase/functions/chercher-vin/index.ts` : une fonction serveur Supabase (Deno) qui appelle l'API Claude.
 - `supabase/functions/ma-cave-mcp/index.ts` : le connecteur « Ma Cave » pour Claude (serveur MCP), qui n'appelle pas l'API Claude.
+
+Les modèles des e-mails de Supabase Auth (confirmation, mot de passe, changement d'adresse, lien magique) sont dans `supabase/emails/`, envoyés par Resend depuis `macave@envoi.pstrauss.org` : à recoller dans Supabase s'ils changent (voir `LISEZMOI.md`).
 
 Le schéma de la base, les règles d'accès (RLS), les fonctions RPC et les espaces de stockage sont configurés dans le projet Supabase et **ne sont pas** dans ce dépôt.
 
@@ -17,7 +19,7 @@ Le schéma de la base, les règles d'accès (RLS), les fonctions RPC et les espa
 
 Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 
-- Lancer en local : `python3 -m http.server 8000`, puis ouvrir http://localhost:8000. Les appels à la fonction serveur échoueront, car elle n'accepte que l'origine `https://straussette.github.io` (contrôle CORS).
+- Lancer en local : `python3 -m http.server 8000`, puis ouvrir http://localhost:8000. Les appels à la fonction serveur échoueront, car elle n'accepte que les origines `https://macave.pstrauss.org` et `https://straussette.github.io` (contrôle CORS).
 - Vérifier la syntaxe du script intégré :
   `awk '/<script>/{f=1;next}/<\/script>/{f=0}f' index.html > /tmp/app.js && node --check /tmp/app.js`
 - Déployer l'app : pousser sur la branche par défaut. GitHub Pages publie `index.html`.

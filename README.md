@@ -2,7 +2,7 @@
 
 **Ma Cave** est une application web pour gérer sa cave à vin personnelle depuis son téléphone ou son ordinateur : on photographie ses bouteilles, l'app les identifie, conseille quand les boire et avec quoi, estime la valeur de la cave, et permet d'organiser des commandes groupées entre amis.
 
-👉 **Ouvrir l'app : [straussette.github.io](https://straussette.github.io)**
+👉 **Ouvrir l'app : [macave.pstrauss.org](https://macave.pstrauss.org)**
 
 ---
 
