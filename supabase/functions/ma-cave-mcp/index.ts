@@ -15,7 +15,7 @@ const NOM = "ma-cave";
 const VERSION = "1.5.0";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
-const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://straussette.github.io). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
+const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://macave.pstrauss.org). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
 
 - Avant de conseiller une bouteille, regarde sa vraie cave avec ma_cave (filtre a_boire pour ce qui est prêt). Ne propose dans « ta cave » que des vins qui y sont, avec du stock.
 - Pour compléter une fiche ou présenter un domaine, fais une vraie recherche web (site du domaine, guides, cavistes, critiques). N'invente jamais : si tu ne trouves pas, dis-le et n'enregistre rien. Cite tes sources dans le champ sources.

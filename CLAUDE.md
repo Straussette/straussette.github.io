@@ -4,7 +4,7 @@ Ce fichier guide Claude Code (claude.ai/code) lorsqu'il travaille sur le code de
 
 ## Projet
 
-**Ma Cave** : application web de gestion de cave à vin, en français, installable comme une app. Elle est hébergée par GitHub Pages à l'adresse https://straussette.github.io. Le texte de l'interface, les noms dans le code, les commentaires et les messages de commit sont en français : il faut garder cette règle.
+**Ma Cave** : application web de gestion de cave à vin, en français, installable comme une app. Elle est hébergée par GitHub Pages à l'adresse https://macave.pstrauss.org (domaine `pstrauss.org` chez Cloudflare, fichier `CNAME` ; l'ancienne adresse https://straussette.github.io y redirige). Le texte de l'interface, les noms dans le code, les commentaires et les messages de commit sont en français : il faut garder cette règle.
 
 Le dépôt contient trois fichiers de code :
 - `index.html` : toute l'application côté navigateur (HTML + CSS + JavaScript sans framework, sans dépendance, sans étape de build).
