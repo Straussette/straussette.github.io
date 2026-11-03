@@ -17,7 +17,7 @@ Le schéma de la base, les règles d'accès (RLS), les fonctions RPC et les espa
 
 Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 
-- Lancer en local : `python3 -m http.server 8000`, puis ouvrir http://localhost:8000. Les appels à la fonction serveur échoueront, car elle n'accepte que les origines `https://cave.pstrauss.org` et `https://straussette.github.io` (contrôle CORS).
+- Lancer en local : `python3 -m http.server 8000`, puis ouvrir http://localhost:8000. Les appels à la fonction serveur échoueront, car elle n'accepte que les origines `https://macave.pstrauss.org` et `https://straussette.github.io` (contrôle CORS).
 - Vérifier la syntaxe du script intégré :
   `awk '/<script>/{f=1;next}/<\/script>/{f=0}f' index.html > /tmp/app.js && node --check /tmp/app.js`
 - Déployer l'app : pousser sur la branche par défaut. GitHub Pages publie `index.html`.
