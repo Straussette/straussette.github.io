@@ -11,6 +11,8 @@ Le dépôt contient trois fichiers de code :
 - `supabase/functions/chercher-vin/index.ts` : une fonction serveur Supabase (Deno) qui appelle l'API Claude.
 - `supabase/functions/ma-cave-mcp/index.ts` : le connecteur « Ma Cave » pour Claude (serveur MCP), qui n'appelle pas l'API Claude.
 
+Les modèles des e-mails de Supabase Auth (confirmation, mot de passe, changement d'adresse, lien magique) sont dans `supabase/emails/`, envoyés par Resend depuis `macave@envoi.pstrauss.org` : à recoller dans Supabase s'ils changent (voir `LISEZMOI.md`).
+
 Le schéma de la base, les règles d'accès (RLS), les fonctions RPC et les espaces de stockage sont configurés dans le projet Supabase et **ne sont pas** dans ce dépôt.
 
 ## Commandes
