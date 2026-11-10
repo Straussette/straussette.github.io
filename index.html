@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-02.1">
+<meta name="app-version" content="2026-11-10.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -502,7 +502,7 @@
     </div>
     <label class="petit case-claude" id="claudeDefautBloc" hidden>
       <input type="checkbox" id="claudeDefaut">
-      <span><strong>Utiliser mon Claude par défaut</strong> pour les fiches, les domaines, la garde, « Que boire ? » et les ajouts (photos, listes, offres de caviste). Les boutons de l'app ouvrent alors Claude avec la demande déjà écrite. Réglage propre à cet appareil.</span>
+      <span><strong>Utiliser mon Claude par défaut</strong> pour les fiches, les domaines, la garde, « Que boire ? » et les ajouts (photos, listes, offres de caviste). Les boutons de l'app ouvrent alors Claude avec la demande déjà écrite. Réglage gardé sur votre compte, pour tous vos appareils.</span>
     </label>
     <ol class="etapes-claude">
       <li>Créez votre lien ci-dessous, puis copiez-le.</li>
@@ -2683,7 +2683,8 @@ function ouvrirSession(s) {
     access_token: s.access_token,
     refresh_token: s.refresh_token,
     expires_at: s.expires_at || Math.floor(Date.now() / 1000) + (s.expires_in || 3600),
-    user: { id: s.user.id, email: s.user.email, pseudo: session?.user?.pseudo || s.user.user_metadata?.pseudo || '' },
+    user: { id: s.user.id, email: s.user.email, pseudo: session?.user?.pseudo || s.user.user_metadata?.pseudo || '',
+      claudeDefaut: session?.user?.id === s.user.id ? !!session.user.claudeDefaut : false },
   };
   ecrireLocal('ma-cave-session', session);
 }
@@ -3218,14 +3219,26 @@ async function majEtatClaude() {
   $('#claudeDefaut').checked = claudeParDefaut();
 }
 
-// « Claude par défaut » : choisi par l'utilisateur, sur cet appareil, une fois son lien créé
+// « Claude par défaut » : choisi par l'utilisateur une fois son lien créé, gardé sur son compte
+// (profils.claude_defaut, lu par assurerProfil) pour suivre tous ses appareils et un changement d'adresse ;
+// le localStorage n'est qu'une copie, qui marche aussi hors ligne
 const cleClaudeDefaut = () => 'ma-cave-claude-defaut-' + (session?.user?.id || '');
 function claudeParDefaut() {
   if (!session) return false;
+  if (session.user.claudeDefaut) return true;
   try { return localStorage.getItem(cleClaudeDefaut()) === '1'; } catch { return false; }
 }
 function choisirClaudeParDefaut(oui) {
   try { if (oui) localStorage.setItem(cleClaudeDefaut(), '1'); else localStorage.removeItem(cleClaudeDefaut()); } catch {}
+  if (!session) return;
+  session.user.claudeDefaut = !!oui;
+  ecrireLocal('ma-cave-session', session);
+  // Tant que le compte n'a pas reçu ce choix (hors ligne…), le marqueur « -attente » le fait gagner sur le compte
+  const attente = cleClaudeDefaut() + '-attente';
+  try { localStorage.setItem(attente, '1'); } catch {}
+  jsonPatch(`/rest/v1/profils?user_id=eq.${moi()}`, { claude_defaut: !!oui })
+    .then(() => { try { localStorage.removeItem(attente); } catch {} })
+    .catch(() => {});
 }
 
 const lienClaude = (message) => 'https://claude.ai/new?q=' + encodeURIComponent(message);
@@ -3352,7 +3365,7 @@ async function terminerImport(id) {
 $('#btnBrancherClaude').onclick = () => { $('#dlgCompte').close(); ouvrirClaude(); };
 $('#claudeDefaut').onchange = (e) => {
   choisirClaudeParDefaut(e.target.checked);
-  statutClaude(e.target.checked ? '✓ Votre Claude sera utilisé par défaut sur cet appareil.' : 'Les recherches se feront de nouveau dans l\'app.');
+  statutClaude(e.target.checked ? '✓ Votre Claude sera utilisé par défaut.' : 'Les recherches se feront de nouveau dans l\'app.');
   afficher();
 };
 $('#claudeFermer').onclick = () => $('#dlgClaude').close();
@@ -3366,7 +3379,7 @@ $('#btnCreerLienClaude').onclick = async () => {
     $('#claudeLienBloc').hidden = false;
     statutClaude('✓ Lien créé. Copiez-le maintenant : il ne sera plus affiché ensuite.');
     await majEtatClaude();
-    if (!claudeParDefaut() && confirm('Utiliser votre Claude par défaut pour les recherches et les ajouts, sur cet appareil ?\n(Une fois le connecteur ajouté dans Claude. Modifiable ici à tout moment.)')) {
+    if (!claudeParDefaut() && confirm('Utiliser votre Claude par défaut pour les recherches et les ajouts ?\n(Une fois le connecteur ajouté dans Claude. Modifiable ici à tout moment.)')) {
       choisirClaudeParDefaut(true);
       $('#claudeDefaut').checked = true;
     }
@@ -4763,9 +4776,26 @@ async function rejoindreCommande(id) {
 async function assurerProfil() {
   if (!session) return;
   try {
-    const r = await sbFetch(`/rest/v1/profils?select=pseudo&user_id=eq.${moi()}`);
+    const r = await sbFetch(`/rest/v1/profils?select=pseudo,claude_defaut&user_id=eq.${moi()}`);
     if (r.length) {
       session.user.pseudo = r[0].pseudo;
+      // « Claude par défaut » : le compte fait foi. Un choix fait sur cet appareil avant que le réglage
+      // ne soit gardé sur le compte y est reporté une seule fois ; ensuite l'appareil suit le compte
+      const cleReporte = cleClaudeDefaut() + '-compte';
+      let local = false, reporte = false, enAttente = false;
+      try {
+        local = localStorage.getItem(cleClaudeDefaut()) === '1';
+        reporte = localStorage.getItem(cleReporte) === '1';
+        enAttente = localStorage.getItem(cleClaudeDefaut() + '-attente') === '1';
+      } catch {}
+      // Un choix fait sur cet appareil et pas encore envoyé (hors ligne) est renvoyé au compte
+      if (enAttente) choisirClaudeParDefaut(local);
+      else if (local && !r[0].claude_defaut && !reporte) choisirClaudeParDefaut(true);
+      else {
+        session.user.claudeDefaut = !!r[0].claude_defaut;
+        try { if (r[0].claude_defaut) localStorage.setItem(cleClaudeDefaut(), '1'); else localStorage.removeItem(cleClaudeDefaut()); } catch {}
+      }
+      try { localStorage.setItem(cleReporte, '1'); } catch {}
     } else {
       let pseudo = session.user.pseudo || '';
       for (let essai = 0; essai < 4; essai++) {
@@ -4786,6 +4816,7 @@ async function assurerProfil() {
     }
     ecrireLocal('ma-cave-session', session);
     afficherCompte();
+    afficher(); // boutons « avec mon Claude » selon le réglage du compte
     await propagerPseudo();
   } catch (e) { console.warn('Profil', e); }
 }
