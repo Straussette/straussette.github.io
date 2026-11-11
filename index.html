@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-11.1">
+<meta name="app-version" content="2026-11-11.2">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -1074,6 +1074,41 @@ function regionVin(b) {
   return { region: region || 'Région inconnue', sous: sous ? sous.charAt(0).toUpperCase() + sous.slice(1) : '' };
 }
 
+// Rapproche les écritures d'un même domaine (« P. & M. Jacqueson » / « Paul et Marie Jacqueson »,
+// « François Raquillet » / « Raquillet Jeanne & François ») : les mots du nom le plus court se retrouvent
+// tous dans le plus long (au moins deux), une initiale valant un prénom. Les noms composés restent entiers
+// (« Trapet » n'est pas « Rossignol-Trapet »).
+function motsDomaine(nom) {
+  return sansAccent(nettoyerDomaine(nom)).toLowerCase().replace(/-+/g, '').replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(domaine|domaines|chateau|clos|maison|cave|caves|vignobles?|pere|peres|fils|freres|et|and|de|du|des|la|le|les|l|d)\b/g, ' ')
+    .trim().split(/\s+/).filter(Boolean);
+}
+function memeProducteur(petit, grand) {
+  // Un nom d'un seul mot ne suffit pas (« Denis Père & Fils » n'est pas « Denis Fournier »)
+  if (petit.length < 2 || !petit.some((m) => m.length >= 4)) return false;
+  const reste = [...grand];
+  return petit.every((m) => {
+    const i = m.length === 1 ? reste.findIndex((g) => g.startsWith(m)) : reste.indexOf(m);
+    if (i < 0) return false;
+    reste.splice(i, 1);
+    return true;
+  });
+}
+// Clé de groupe par domaine pour une liste de vins : les variantes d'écriture partagent la même clé
+function grouperDomaines(vins) {
+  const noms = new Map(); // clé simple -> mots
+  for (const b of vins) { const k = cleDomaine(b.domaine || ''); if (!noms.has(k)) noms.set(k, motsDomaine(b.domaine || '')); }
+  const ordre = [...noms.keys()].sort((a, b) => noms.get(b).length - noms.get(a).length);
+  const rattache = new Map();
+  const tetes = [];
+  for (const k of ordre) {
+    const t = k && tetes.find((x) => memeProducteur(noms.get(k), noms.get(x)));
+    rattache.set(k, t || k);
+    if (!t) tetes.push(k);
+  }
+  return (b) => rattache.get(cleDomaine(b.domaine || '')) || 'inconnu';
+}
+
 // Prestige d'un vin dans son domaine : grand cru, puis premier cru, puis le reste ; ensuite le plus cher
 function comparerPrestige(a, b) {
   const rang = (x) => ({ gc: 0, pc: 1 }[niveauCru(x)] ?? 2);
@@ -1115,8 +1150,8 @@ function listeIntelligente(items, toutOuvrir) {
       + `<span class="chev" aria-hidden="true">▸</span><span class="titre">${titre}</span>`
       + `<span class="resume">${g.n ? g.n + ' bout.' : g.vins.length + ' vin' + (g.vins.length > 1 ? 's' : '')}${g.v ? ' · ≈ ' + fmtEuro(g.v) : ''}${detail ? '<br>' + detail : ''}</span></button></li>` };
   };
-  const domaines = (vins, niveau, prefixe) => grouper(vins,
-    (b) => cleDomaine(b.domaine || '') || 'inconnu', (b) => (b.domaine || '').trim() || 'Producteur inconnu')
+  const domaines = (vins, niveau, prefixe) => grouper(vins, grouperDomaines(vins),
+    (b) => (b.domaine || '').trim() || 'Producteur inconnu')
     .map((d) => {
       const tries = [...d.vins].sort(comparerPrestige);
       if (tries.length === 1) return carte(tries[0], niveau);
@@ -1126,7 +1161,7 @@ function listeIntelligente(items, toutOuvrir) {
       return e.html + (e.ouvert ? tries.map((b) => carte(b, niveau + 1)).join('') : '');
     }).join('');
 
-  const nDomaines = (vins) => { const n = new Set(vins.map((b) => cleDomaine(b.domaine || ''))).size; return n + ' domaine' + (n > 1 ? 's' : ''); };
+  const nDomaines = (vins) => { const n = new Set(vins.map(grouperDomaines(vins))).size; return n + ' domaine' + (n > 1 ? 's' : ''); };
   const regions = grouper(items, (b) => norm(regionVin(b).region), (b) => regionVin(b).region);
   // Une seule région : on la déplie d'office
   const seule = regions.length === 1;
