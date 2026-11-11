@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-11.2">
+<meta name="app-version" content="2026-11-11.3">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -362,6 +362,7 @@
         <option value="garde">Boire / garder</option>
         <option value="producteur">Par producteur</option>
         <option value="region">Par région</option>
+        <option value="appellation">Par appellation</option>
         <option value="couleur">Par couleur</option>
       </select>
       <select id="sort" aria-label="Trier par">
@@ -975,6 +976,10 @@ function afficher() {
   } else if (groupe === 'aucun') {
     $('#list').innerHTML = items.map((b) => carte(b)).join('');
   } else {
+    if (groupe === 'appellation') {
+      const rang = (x) => { const c = niveauCru(x); return c === 'pc' ? 1 : c === 'gc' || grandCruParAppellation(x) ? 0 : 2; };
+      items = items.map((b, i) => [b, i]).sort(([a, i], [b, j]) => rang(a) - rang(b) || i - j).map(([b]) => b);
+    }
     const groupes = new Map();
     for (const b of items) {
       const k = cleGroupe(b, groupe);
@@ -1183,8 +1188,51 @@ function listeIntelligente(items, toutOuvrir) {
   }).join('');
 }
 
+/* ---------- Regroupement par appellation ---------- */
+// Villages de Bourgogne du nord au sud (l'ordre de la route des Grands Crus), puis les autres appellations
+const VILLAGES_ORDRE = ['Chablis', 'Marsannay', 'Fixin', 'Brochon', 'Gevrey-Chambertin', 'Morey-Saint-Denis', 'Chambolle-Musigny',
+  'Vougeot', 'Vosne-Romanée', 'Nuits-Saint-Georges', 'Côte de Nuits-Villages', 'Hautes-Côtes de Nuits', 'Ladoix', 'Aloxe-Corton', 'Corton',
+  'Pernand-Vergelesses', 'Savigny-lès-Beaune', 'Chorey-lès-Beaune', 'Beaune', 'Pommard', 'Volnay', 'Monthélie', 'Auxey-Duresses',
+  'Saint-Romain', 'Meursault', 'Blagny', 'Puligny-Montrachet', 'Chassagne-Montrachet', 'Saint-Aubin', 'Santenay', 'Maranges',
+  'Côte de Beaune-Villages', 'Hautes-Côtes de Beaune', 'Bouzeron', 'Rully', 'Mercurey', 'Givry', 'Montagny', 'Viré-Clessé',
+  'Pouilly-Fuissé', 'Saint-Véran', 'Mâcon', 'Bourgogne Aligoté', 'Crémant de Bourgogne', 'Coteaux Bourguignons', 'Bourgogne'];
+// Grands crus rangés avec leur village (Corton et Corton-Charlemagne restent ensemble : la colline est partagée)
+const GRANDS_CRUS_VILLAGE = [
+  ['Gevrey-Chambertin', /^(chambertin|clos de beze|mazis|mazoyeres|charmes chambertin|griotte|latricieres|ruchottes|chapelle chambertin)/],
+  ['Morey-Saint-Denis', /^(clos de la roche|clos saint denis|clos st denis|clos de tart|clos des lambrays)/],
+  ['Chambolle-Musigny', /^(musigny|bonnes mares)/],
+  ['Vougeot', /^(clos de vougeot|clos vougeot)/],
+  ['Vosne-Romanée', /^(grands? echezeaux|echezeaux|romanee|la romanee|richebourg|la tache|la grande rue)/],
+  ['Corton', /^(corton|charlemagne)/],
+  ['Puligny-Montrachet', /^((le )?montrachet|batard montrachet|chevalier montrachet|bienvenues)/],
+  ['Chassagne-Montrachet', /^(criots)/],
+];
+const grandCruVillage = (n) => GRANDS_CRUS_VILLAGE.find(([, re]) => re.test(n));
+// Grand cru d'après le nom de l'appellation, même sans classement renseigné (« Clos de Vougeot », « Chambertin »)
+const grandCruParAppellation = (b) => !!grandCruVillage(norm(nettoyerAppellation(b.appellation || '')));
+function appellationVillage(b) {
+  let a = nettoyerAppellation(b.appellation || '').replace(/\s+(DOCG|DOCa|DOC|DO|AVA|IGP|IGT|VdP)\b.*$/, '');
+  // « Rully 1er Cru La Pucelle », « Beaune Premier Cru Les Grèves » : on garde le village
+  a = a.replace(/\s+((premier|1er)\.?\s+(grand\s+)?cru|grand\s+cru)\b.*$/i, '').trim();
+  // « Bourgogne Hautes-Côtes de Nuits » : appellation officielle des Hautes-Côtes
+  a = a.replace(/^bourgogne\s+(?=hautes)/i, '');
+  const n = norm(a);
+  if (!n) return '';
+  const village = VILLAGES_ORDRE.find((v) => n === norm(v) || n.startsWith(norm(v) + ' '));
+  if (village && village !== 'Bourgogne') return village;
+  const gc = grandCruVillage(n);
+  if (gc) return gc[0];
+  return village || a;
+}
+
 // Clé de regroupement d'une bouteille (titre affiché + ordre des sections)
 function cleGroupe(b, groupe) {
+  if (groupe === 'appellation') {
+    const t = appellationVillage(b);
+    if (!t) return { cle: '?', titre: 'Appellation inconnue', ordre: 9999 };
+    const i = VILLAGES_ORDRE.indexOf(t);
+    return { cle: norm(t), titre: t, ordre: i < 0 ? 1000 : i };
+  }
   if (groupe === 'producteur') {
     const t = (b.domaine || '').trim() || 'Producteur inconnu';
     return { cle: norm(t), titre: t, ordre: b.domaine ? 0 : 1 };
