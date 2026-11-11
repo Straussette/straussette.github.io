@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-10.1">
+<meta name="app-version" content="2026-11-11.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -69,6 +69,7 @@
   input[type=checkbox], input[type=radio] { width:auto; flex:none; padding:0; accent-color:var(--accent); }
   .selects { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .selects #cru { grid-column:1 / -1; }
+  .selects.sans-tri #group { grid-column:1 / -1; }
   .group-h {
     display:flex; justify-content:space-between; align-items:baseline; gap:8px;
     margin:14px 2px 0; padding-bottom:4px; border-bottom:1px solid var(--border);
@@ -76,6 +77,24 @@
   .group-h:first-child { margin-top:0; }
   .group-h h3 { margin:0; font-family:Georgia, "Times New Roman", serif; font-size:1.05rem; font-weight:600; }
   .group-h span { font-size:.82rem; color:var(--muted); white-space:nowrap; }
+  /* Tri intelligent : région › sous-région › domaine, chaque niveau se déplie d'un toucher */
+  .grp { list-style:none; }
+  .grp button:disabled { cursor:default; color:inherit; opacity:1; }
+  .grp button {
+    width:100%; display:flex; align-items:center; gap:8px; text-align:left; cursor:pointer;
+    font:inherit; color:inherit; background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:11px 12px;
+  }
+  .grp .chev { flex:none; width:1em; color:var(--muted); transition:transform .15s; }
+  .grp button[aria-expanded="true"] .chev { transform:rotate(90deg); }
+  .grp .titre { flex:1; min-width:0; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; line-height:1.25; }
+  .grp .resume { flex:none; font-size:.82rem; font-weight:400; color:var(--muted); text-align:right; }
+  .grp.n1 button { background:color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+  .grp.n1 .titre { font-family:Georgia, "Times New Roman", serif; font-size:1.08rem; font-weight:600; }
+  .grp.n2 button { margin-left:10px; width:calc(100% - 10px); font-weight:600; }
+  .grp.n3 button { margin-left:20px; width:calc(100% - 20px); }
+  .list .card.n2 { margin-left:10px; } .list .card.n3 { margin-left:20px; } .list .card.n4 { margin-left:30px; }
+  .grp .cru { margin-left:0; }
   .chips { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; }
   .chip {
     border:1px solid var(--border); background:var(--surface); color:var(--text);
@@ -338,6 +357,7 @@
         <option value="pc">Premiers crus</option>
       </select>
       <select id="group" aria-label="Regrouper par">
+        <option value="intelligent">✨ Tri intelligent</option>
         <option value="aucun">Sans groupes</option>
         <option value="garde">Boire / garder</option>
         <option value="producteur">Par producteur</option>
@@ -889,12 +909,12 @@ function svgBouteille(b) {
 }
 
 /* ---------- Affichage ---------- */
-function carte(b) {
+function carte(b, niveau = 0) {
   const st = statut(b);
   const c = slug(b.couleur);
   const sousTitre = [b.appellation, b.millesime || 'NM'].filter(Boolean).join(' · ');
   return `
-    <li class="card ${b.quantite <= 0 ? 'epuise' : ''}" data-id="${esc(b.id)}">
+    <li class="card ${b.quantite <= 0 ? 'epuise' : ''}${niveau > 1 ? ' n' + niveau : ''}" data-id="${esc(b.id)}">
       <button class="card-main" data-act="edit">
         <div class="ph vin c-${c}" aria-hidden="true">${svgBouteille(b)}</div>
         <div class="info">
@@ -947,8 +967,13 @@ function afficher() {
   items.sort(comparateurs[tri]);
 
   const groupe = $('#group').value;
-  if (groupe === 'aucun') {
-    $('#list').innerHTML = items.map(carte).join('');
+  // Le tri intelligent fixe lui-même l'ordre : le choix « Trier par » n'y sert pas
+  $('#sort').hidden = groupe === 'intelligent';
+  $('.selects').classList.toggle('sans-tri', groupe === 'intelligent');
+  if (groupe === 'intelligent') {
+    $('#list').innerHTML = listeIntelligente(items, !!q || items.length <= 12);
+  } else if (groupe === 'aucun') {
+    $('#list').innerHTML = items.map((b) => carte(b)).join('');
   } else {
     const groupes = new Map();
     for (const b of items) {
@@ -962,7 +987,7 @@ function afficher() {
       const n = g.vins.reduce((s, b) => s + b.quantite, 0);
       const v = g.vins.reduce((s, b) => s + (valeurUnitaire(b) || 0) * b.quantite, 0);
       return `<li class="group-h"><h3>${esc(g.titre)}</h3><span>${n} bout.${v ? ' · ≈ ' + fmtEuro(v) : ''}</span></li>`
-        + g.vins.map(carte).join('');
+        + g.vins.map((b) => carte(b)).join('');
     }).join('');
   }
 
@@ -987,6 +1012,140 @@ function afficher() {
 
   afficherChips();
   if ($('#vueBues') && !$('#vueBues').hidden) afficherBues();
+}
+
+/* ---------- Tri intelligent ---------- */
+// Grande région et sous-région d'un vin, d'après son champ « région » (souvent détaillé :
+// « Bourgogne (Côte de Beaune, Aloxe-Corton) », « Rhône Sud (Gard…) ») ou, à défaut, son appellation
+const VILLAGES_BOURGOGNE = [
+  ['Côte de Nuits', /\b(gevrey|chambertin|vosne|romanee|nuits saint georges|nuits st georges|chambolle|musigny|morey|clos de (la )?roche|clos de tart|clos saint denis|bonnes mares|vougeot|echezeaux|marsannay|fixin|brochon|cote de nuits)\b/],
+  ['Côte de Beaune', /\b(beaune|pommard|volnay|meursault|puligny|chassagne|montrachet|savigny|aloxe|corton|charlemagne|saint aubin|st aubin|santenay|monthelie|auxey|pernand|chorey|saint romain|ladoix|maranges|blagny|cote de beaune)\b/],
+  ['Côte Chalonnaise', /\b(mercurey|givry|rully|montagny|bouzeron|cote chalonnaise)\b/],
+  ['Mâconnais', /\b(pouilly fuisse|pouilly loche|pouilly vinzelles|macon|saint veran|vire clesse)\b/],
+  ['Chablis', /\b(chablis)\b/],
+  ['Hautes-Côtes', /\b(hautes cotes)\b/],
+  ['Beaujolais', /\b(beaujolais|morgon|fleurie|moulin a vent|brouilly|julienas|chenas|chiroubles|regnie|saint amour)\b/],
+];
+const PAYS_REGIONS = [
+  ['Italie', /\b(italie|piemont|toscane|latium|venetie|sicile|campanie|frioul|ombrie|marches|abruzzes|pouilles|sardaigne|lombardie|trentin|alto adige|barolo|barbaresco|chianti|montalcino)\b/],
+  ['Espagne', /\b(espagne|rioja|ribera|priorat|galice|jerez|navarre|catalogne|toro|rias baixas)\b/],
+  ['Portugal', /\b(portugal|douro|porto|dao|alentejo|madere|vinho verde)\b/],
+  ['Allemagne', /\b(allemagne|moselle allemande|mosel|rheingau|pfalz|nahe|rheinhessen)\b/],
+  ['États-Unis', /\b(etats unis|usa|californie|california|napa|sonoma|oregon|washington)\b/],
+];
+// Région déduite de l'appellation quand le champ « région » est vide
+const REGIONS_APPELLATION = [
+  ['Bordeaux', /\b(bordeaux|medoc|pauillac|margaux|saint julien|st julien|saint estephe|listrac|moulis|pessac|graves|sauternes|barsac|pomerol|saint emilion|st emilion|fronsac|entre deux mers|cotes de bourg|blaye|castillon)\b/],
+  ['Bourgogne', /\b(bourgogne|coteaux bourguignons)\b/],
+  ['Champagne', /\b(champagne)\b/],
+  ['Alsace', /\b(alsace)\b/],
+  ['Rhône', /\b(hermitage|cote rotie|condrieu|cornas|saint joseph|chateauneuf|gigondas|vacqueyras|cotes du rhone|tavel|lirac|rasteau|cairanne)\b/],
+  ['Loire', /\b(sancerre|pouilly fume|vouvray|chinon|bourgueil|saumur|muscadet|savennieres|anjou|montlouis|menetou)\b/],
+  ['Jura', /\b(jura|arbois|chateau chalon|etoile)\b/],
+  ['Languedoc', /\b(languedoc|pic saint loup|faugeres|minervois|corbieres|saint chinian|terrasses du larzac)\b/],
+  ['Provence', /\b(provence|bandol|cassis|palette)\b/],
+];
+function regionVin(b) {
+  const brut = (b.region || '').trim();
+  const n = norm(brut + ' ' + (b.appellation || ''));
+  // Grande région : le début du champ, avant parenthèse, tiret ou virgule
+  let region = brut.split(/\s*[(–—,]\s*|\s+-\s+/)[0].trim();
+  if (!region) region = (REGIONS_APPELLATION.find(([, re]) => re.test(norm(b.appellation || ''))) || [''])[0];
+  let sous = '';
+  const detail = brut.slice(region.length).replace(/^[\s(–—,-]+|[)\s]+$/g, '');
+  // Rhône Nord / Rhône Sud, Loire…, Bordeaux rive gauche
+  const m = /^(rhone|vallee du rhone)\s+(nord|sud|septentrional|meridional)/i.exec(sansAccent(region));
+  if (m) { region = 'Rhône'; sous = /nord|sept/i.test(m[2]) ? 'Rhône Nord' : 'Rhône Sud'; }
+  if (!sous && /^(cotes? du rhone|vallee du rhone|rhone)\b/.test(norm(region))) region = 'Rhône';
+  const nr = norm(region);
+  if (!region || nr === 'bourgogne' || /^bourgogne/.test(nr)) {
+    const v = VILLAGES_BOURGOGNE.find(([, re]) => re.test(n));
+    if (v) {
+      region = v[0] === 'Beaujolais' && !/bourgogne/.test(nr) ? 'Beaujolais' : 'Bourgogne';
+      if (region === 'Bourgogne') sous = v[0];
+    }
+  }
+  // Une région française ne part jamais à l'étranger (« Corse (Porto-Vecchio) » n'est pas le Portugal)
+  const francaise = /^(bourgogne|bordeaux|rhone|loire|alsace|champagne|jura|savoie|provence|corse|languedoc|roussillon|sud ouest|beaujolais)\b/.test(norm(region));
+  const pays = !francaise && PAYS_REGIONS.find(([, re]) => re.test(norm(brut)));
+  if (pays && norm(region) !== norm(pays[0])) { sous = region; region = pays[0]; }
+  if (!sous && detail && region !== 'Bourgogne') sous = detail.split(/\s*[,(/]\s*/)[0];
+  if (/^bordeaux$/i.test(region)) sous = /gauche|medoc|graves|pauillac|margaux|julien|estephe|pessac|sauternes/i.test(sansAccent(n)) ? 'Rive gauche' : /droite|libourn|pomerol|emilion|fronsac/i.test(sansAccent(n)) ? 'Rive droite' : sous;
+  return { region: region || 'Région inconnue', sous: sous ? sous.charAt(0).toUpperCase() + sous.slice(1) : '' };
+}
+
+// Prestige d'un vin dans son domaine : grand cru, puis premier cru, puis le reste ; ensuite le plus cher
+function comparerPrestige(a, b) {
+  const rang = (x) => ({ gc: 0, pc: 1 }[niveauCru(x)] ?? 2);
+  return rang(a) - rang(b) || (valeurUnitaire(b) || 0) - (valeurUnitaire(a) || 0)
+    || (Number(a.millesime) || 9999) - (Number(b.millesime) || 9999);
+}
+
+// Groupes dépliés par l'utilisateur (gardés sur cet appareil)
+let grpOuverts = new Set();
+try { grpOuverts = new Set(JSON.parse(localStorage.getItem('ma-cave-ouverts') || '[]')); } catch {}
+function basculerGroupe(cle) {
+  if (grpOuverts.has(cle)) grpOuverts.delete(cle); else grpOuverts.add(cle);
+  try { localStorage.setItem('ma-cave-ouverts', JSON.stringify([...grpOuverts])); } catch {}
+  afficher();
+  // La liste est redessinée : on rend le focus au même en-tête (clavier, lecteur d'écran)
+  [...$('#list').querySelectorAll('[data-grp]')].find((x) => x.dataset.grp === cle)?.focus({ preventScroll: true });
+}
+
+// Région › sous-région (si la région en a plusieurs) › domaine (s'il a plusieurs vins) › vins.
+// Chaque niveau est rangé par valeur totale décroissante (à défaut, par nombre de bouteilles).
+function listeIntelligente(items, toutOuvrir) {
+  const somme = (vins) => ({
+    n: vins.reduce((s, b) => s + b.quantite, 0),
+    v: vins.reduce((s, b) => s + (valeurUnitaire(b) || 0) * Math.max(b.quantite, 0), 0),
+  });
+  const grouper = (vins, cleDe, titreDe) => {
+    const m = new Map();
+    for (const b of vins) {
+      const k = cleDe(b);
+      if (!m.has(k)) m.set(k, { cle: k, titre: titreDe(b), vins: [] });
+      m.get(k).vins.push(b);
+    }
+    return [...m.values()].map((g) => ({ ...g, ...somme(g.vins) }))
+      .sort((a, b) => b.v - a.v || b.n - a.n || a.titre.localeCompare(b.titre, 'fr'));
+  };
+  const entete = (cle, niveau, titre, g, detail = '') => {
+    const ouvert = toutOuvrir || grpOuverts.has(cle);
+    return { ouvert, html: `<li class="grp n${niveau}"><button data-grp="${esc(cle)}" aria-expanded="${ouvert}">`
+      + `<span class="chev" aria-hidden="true">▸</span><span class="titre">${titre}</span>`
+      + `<span class="resume">${g.n ? g.n + ' bout.' : g.vins.length + ' vin' + (g.vins.length > 1 ? 's' : '')}${g.v ? ' · ≈ ' + fmtEuro(g.v) : ''}${detail ? '<br>' + detail : ''}</span></button></li>` };
+  };
+  const domaines = (vins, niveau, prefixe) => grouper(vins,
+    (b) => cleDomaine(b.domaine || '') || 'inconnu', (b) => (b.domaine || '').trim() || 'Producteur inconnu')
+    .map((d) => {
+      const tries = [...d.vins].sort(comparerPrestige);
+      if (tries.length === 1) return carte(tries[0], niveau);
+      const crus = tries.filter((b) => niveauCru(b) === 'gc').length ? '<span class="cru">GC</span>'
+        : tries.some((b) => niveauCru(b) === 'pc') ? '<span class="cru">1er cru</span>' : '';
+      const e = entete(prefixe + '|' + d.cle, niveau, esc(d.titre) + crus, d, d.n ? `${tries.length} vins` : '');
+      return e.html + (e.ouvert ? tries.map((b) => carte(b, niveau + 1)).join('') : '');
+    }).join('');
+
+  const nDomaines = (vins) => { const n = new Set(vins.map((b) => cleDomaine(b.domaine || ''))).size; return n + ' domaine' + (n > 1 ? 's' : ''); };
+  const regions = grouper(items, (b) => norm(regionVin(b).region), (b) => regionVin(b).region);
+  // Une seule région : on la déplie d'office
+  const seule = regions.length === 1;
+  return regions.map((r) => {
+    const sous = grouper(r.vins, (b) => norm(regionVin(b).sous), (b) => regionVin(b).sous);
+    const avecSous = sous.length > 1;
+    const e = entete('r|' + r.cle, 1, esc(r.titre), r,
+      avecSous ? `${sous.length} sous-régions` : nDomaines(r.vins));
+    const ouvert = e.ouvert || seule;
+    const tete = seule ? e.html.replace(/aria-expanded="(true|false)"/, 'aria-expanded="true" disabled') : e.html;
+    if (!ouvert) return tete;
+    if (!avecSous) return tete + domaines(r.vins, 2, 'r|' + r.cle);
+    return tete + sous.map((s) => {
+      const t = s.titre || (r.titre === 'Bourgogne' ? 'Bourgogne régionale' : 'Autres');
+      const es = entete('s|' + r.cle + '|' + s.cle, 2, esc(t), s,
+        nDomaines(s.vins));
+      return es.html + (es.ouvert ? domaines(s.vins, 3, 's|' + r.cle + '|' + s.cle) : '');
+    }).join('');
+  }).join('');
 }
 
 // Clé de regroupement d'une bouteille (titre affiché + ordre des sections)
@@ -2167,6 +2326,8 @@ $('#dlg').addEventListener('close', () => {
 
 /* ---------- Actions sur la liste ---------- */
 $('#list').addEventListener('click', async (e) => {
+  const grp = e.target.closest('[data-grp]');
+  if (grp) return basculerGroupe(grp.dataset.grp);
   const btn = e.target.closest('[data-act]');
   if (!btn) return;
   const id = btn.closest('.card').dataset.id;
@@ -2192,11 +2353,12 @@ $('#group').addEventListener('change', () => { memoriserVue(); afficher(); });
 $('#cru').addEventListener('change', () => { memoriserVue(); afficher(); });
 // Le regroupement et le tri choisis sont retenus sur cet appareil
 function memoriserVue() {
-  try { localStorage.setItem('ma-cave-vue', JSON.stringify({ group: $('#group').value, sort: $('#sort').value, cru: $('#cru').value })); } catch {}
+  try { localStorage.setItem('ma-cave-vue', JSON.stringify({ group: $('#group').value, sort: $('#sort').value, cru: $('#cru').value, v: 2 })); } catch {}
 }
 try {
   const vue = JSON.parse(localStorage.getItem('ma-cave-vue') || '{}');
-  if (vue.group) $('#group').value = vue.group;
+  // v2 : le tri intelligent devient le regroupement par défaut, y compris pour qui avait un ancien choix
+  if (vue.group && vue.v === 2) $('#group').value = vue.group;
   if (vue.sort) $('#sort').value = vue.sort;
   if (vue.cru) $('#cru').value = vue.cru;
 } catch {}
