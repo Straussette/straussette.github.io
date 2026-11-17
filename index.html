@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-11.3">
+<meta name="app-version" content="2026-11-17.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -309,7 +309,19 @@
   .bloc-lien-claude { display:grid; gap:8px; }
   .case-claude { display:flex; gap:8px; align-items:flex-start; }
   .case-claude input { margin-top:3px; width:20px; height:20px; }
+  .accueil-claude { max-width:34rem; margin:14px auto 0; padding:12px 14px; border-radius:12px; font-size:.92rem;
+    background:color-mix(in srgb, var(--accent) 7%, var(--surface)); border:1px solid var(--border); }
   .info-claude { margin:0; font-size:.85rem; color:var(--muted); }
+  /* Encart qui met en avant « tout faire avec son Claude » */
+  .encart-claude { position:relative; border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+    background:color-mix(in srgb, var(--accent) 7%, var(--surface)); border-radius:14px; padding:14px 16px; margin:0 0 14px; }
+  .encart-claude h3 { margin:0 0 6px; font-size:1.02rem; }
+  .encart-claude p { margin:0 0 10px; font-size:.9rem; color:var(--muted); }
+  .encart-claude ul { margin:0 0 12px; padding-left:20px; font-size:.9rem; }
+  .encart-claude ul li { margin:2px 0; }
+  .encart-claude .actions { margin:0; flex-wrap:wrap; }
+  .encart-claude .fermer-encart { position:absolute; top:6px; right:8px; background:none; border:0; font-size:1.1rem;
+    color:var(--muted); cursor:pointer; padding:4px 8px; }
   .lien-claude { width:100%; font-family:ui-monospace, Menlo, monospace; font-size:.78rem; }
   .exemples-claude { margin:0; padding-left:20px; font-size:.88rem; color:var(--muted); display:grid; gap:4px; }
 </style>
@@ -341,6 +353,7 @@
     <button class="btn primary" id="accueilConnexion">Se connecter</button>
     <button class="btn secondary" id="accueilInscription">Créer un compte</button>
   </div>
+  <p class="accueil-claude">🤖 <strong>Vous avez Claude ?</strong> Branchez-le à votre cave : il lit vos photos et vos listes, prépare les fiches de vos vins et vous dit quoi ouvrir ce soir, sur votre abonnement Claude.</p>
   <p class="petit">Un compte gratuit est nécessaire : votre cave est enregistrée en ligne et vous la retrouvez sur tous vos appareils.</p>
 </section>
 
@@ -376,6 +389,7 @@
     </div>
   </div>
 
+  <div id="encartClaude"></div>
   <ul class="list" id="list"></ul>
   <p class="empty" id="empty" hidden></p>
 
@@ -470,7 +484,7 @@
       <p style="margin-top:6px">Pseudo : <strong id="c-monpseudo"></strong> <button type="button" class="link" id="btnChangerPseudo">Modifier</button></p>
       <p id="c-sync" style="margin-top:6px"></p>
       <p class="petit" id="c-demandes" style="margin-top:6px" hidden></p>
-      <p style="margin-top:6px"><button type="button" class="link" id="btnBrancherClaude">🤖 Brancher mon Claude</button> <span class="petit" id="c-claude">— votre Claude fait les recherches et gère votre cave, sur votre abonnement</span></p>
+      <p style="margin-top:6px"><button type="button" class="link" id="btnBrancherClaude">🤖 Brancher mon Claude</button> <span class="petit" id="c-claude">— recommandé : votre Claude remplit votre cave et fait toutes les recherches, sur votre abonnement</span></p>
     </div>
 
     <p class="search-status" id="compteStatut" hidden></p>
@@ -545,6 +559,7 @@
 <dialog id="dlgLot">
   <div class="lot">
     <h2>Ajouter des bouteilles</h2>
+    <div id="lotEncartClaude"></div>
     <p class="search-help"><strong>Des bouteilles sous la main ?</strong> Une seule ou jusqu'à 8 par photo, debout, étiquettes face à l'objectif. Plusieurs photos possibles.</p>
     <label class="photo-pick">
       <input type="file" id="lotPhotos" accept="image/*" multiple hidden>
@@ -996,6 +1011,7 @@ function afficher() {
     }).join('');
   }
 
+  $('#encartClaude').innerHTML = encartClaude(bottles.length === 0 ? 'vide' : 'cave');
   const vide = $('#empty');
   if (bottles.length === 0) {
     vide.hidden = false;
@@ -1367,7 +1383,7 @@ async function appelerAPI(corps, code) {
   const r = await fetch(API_RECHERCHE, { method: 'POST', headers: entetes, body: JSON.stringify(corps) });
   const f = await r.json().catch(() => ({}));
   if (r.status === 401) {
-    if (tok) throw new Error('votre compte n\'est pas encore autorisé à utiliser la recherche.');
+    if (tok) throw new Error('la recherche de l\'app n\'est pas encore ouverte pour votre compte (l\'administrateur doit l\'activer). En attendant, faites-la avec votre propre Claude : Mon compte → 🤖 Brancher mon Claude.');
     oublierCode();
     throw new Error('code d\'accès incorrect. Réessayez pour le saisir à nouveau.');
   }
@@ -2814,6 +2830,7 @@ $('#lotGo').onclick = async () => {
 function ouvrirAjout() {
   if (!session) return;
   $('#lotInfoClaude').hidden = !claudeParDefaut();
+  $('#lotEncartClaude').innerHTML = encartClaude('ajout');
   if (!lotOccupe) {
     lot = [];
     lotFiches = null;
@@ -3445,10 +3462,64 @@ async function afficherClaudeCompte() {
   const el = $('#c-claude');
   let etat;
   try { etat = await lireEtatClaude(); } catch { return; }
-  if (!etat) el.textContent = '— votre Claude fait les recherches et gère votre cave, sur votre abonnement';
+  $('#btnBrancherClaude').className = etat ? 'link' : 'btn primary petit-btn';
+  if (!etat) el.textContent = '— recommandé : votre Claude remplit votre cave et fait toutes les recherches, sur votre abonnement';
   else if (etat.utilise) el.textContent = `— ✓ branché (dernière utilisation le ${dateClaude(etat.utilise)})`;
   else el.textContent = '— lien créé, pas encore utilisé par Claude';
 }
+
+// Encart « Faites tout avec votre Claude » : tant que Claude n'est pas branché (ou pas utilisé par défaut).
+// L'état n'est connu qu'après lecture (lireEtatClaude) : rien n'est affiché avant.
+const CLE_ENCART_CLAUDE = () => 'ma-cave-encart-claude-ferme-' + (session?.user?.id || '');
+function encartClaude(contexte) {
+  if (!session || !etatClaudeMemo || etatClaudeMemo.uid !== session.user.id) return '';
+  const branche = !!etatClaudeMemo.etat;
+  if (branche && claudeParDefaut()) return '';
+  // Dans la cave déjà remplie, l'encart peut être fermé ; à vide et dans l'ajout, il reste
+  if (contexte === 'cave') { try { if (localStorage.getItem(CLE_ENCART_CLAUDE()) === (branche ? 'defaut' : 'brancher')) return ''; } catch {} }
+  const fermer = contexte === 'cave' ? `<button type="button" class="fermer-encart" data-claude="fermer" aria-label="Masquer">✕</button>` : '';
+  if (branche) {
+    return `<div class="encart-claude">${fermer}<h3>🤖 Votre Claude est branché</h3>
+      <p>Utilisez-le pour tous les ajouts (photos, listes, offres de caviste) et toutes les recherches : fiches, domaines, garde, « Que boire ? ». C'est votre abonnement qui travaille, sans limite dans l'app.</p>
+      <div class="actions"><button type="button" class="btn primary petit-btn" data-claude="defaut">Utiliser mon Claude par défaut</button></div></div>`;
+  }
+  const titre = contexte === 'ajout' ? '🤖 Le plus simple : votre propre Claude' : contexte === 'vide' ? '🤖 Remplissez votre cave avec votre Claude' : '🤖 Faites tout avec votre Claude';
+  return `<div class="encart-claude">${fermer}<h3>${titre}</h3>
+    <p>Vous avez un compte Claude (même gratuit) ? Branchez-le à Ma Cave en 2 minutes :</p>
+    <ul>
+      <li>il lit vos <strong>photos d'étiquettes</strong> et vos <strong>listes</strong> (Excel, PDF, captures), vous validez avant l'ajout ;</li>
+      <li>il prépare la <strong>fiche</strong> de chaque vin et la <strong>présentation du domaine</strong> ;</li>
+      <li>il vous dit <strong>quoi ouvrir ce soir</strong> et répond à vos questions sur votre cave.</li>
+    </ul>
+    <p>Tout passe par votre abonnement Claude : aucune limite ni attente d'autorisation dans l'app.</p>
+    <div class="actions"><button type="button" class="btn primary petit-btn" data-claude="brancher">🤖 Brancher mon Claude</button></div></div>`;
+}
+function majEncartsClaude() {
+  if (!session) return;
+  lireEtatClaude().then(() => {
+    $('#encartClaude').innerHTML = encartClaude(bottles.length === 0 ? 'vide' : 'cave');
+    if ($('#dlgLot').open) $('#lotEncartClaude').innerHTML = encartClaude('ajout');
+  }).catch(() => {});
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-claude]');
+  if (!b) return;
+  const quoi = b.dataset.claude;
+  if (quoi === 'brancher') {
+    // L'ajout n'est refermé que s'il est vierge (rien en cours, aucune lecture à valider)
+    if ($('#dlgLot').open && !lotOccupe && !lotImportId && !lot.length) $('#dlgLot').close();
+    ouvrirClaude();
+  } else if (quoi === 'defaut') {
+    choisirClaudeParDefaut(true);
+    toast('✓ Votre Claude sera utilisé par défaut.');
+    $('#lotInfoClaude').hidden = false;
+    $('#lotEncartClaude').innerHTML = '';
+    afficher();
+  } else if (quoi === 'fermer') {
+    try { localStorage.setItem(CLE_ENCART_CLAUDE(), etatClaudeMemo?.etat ? 'defaut' : 'brancher'); } catch {}
+    $('#encartClaude').innerHTML = '';
+  }
+});
 
 async function majEtatClaude() {
   let etat = null;
@@ -3607,6 +3678,11 @@ async function terminerImport(id) {
   } catch { /* sera repris à la prochaine ouverture */ }
 }
 
+// En refermant « Brancher mon Claude », les encarts suivent le nouvel état (lien créé, Claude par défaut…)
+$('#dlgClaude').addEventListener('close', () => {
+  afficher();
+  if ($('#dlgLot').open) $('#lotEncartClaude').innerHTML = encartClaude('ajout');
+});
 $('#btnBrancherClaude').onclick = () => { $('#dlgCompte').close(); ouvrirClaude(); };
 $('#claudeDefaut').onchange = (e) => {
   choisirClaudeParDefaut(e.target.checked);
@@ -5062,6 +5138,7 @@ async function assurerProfil() {
     ecrireLocal('ma-cave-session', session);
     afficherCompte();
     afficher(); // boutons « avec mon Claude » selon le réglage du compte
+    majEncartsClaude(); // « Faites tout avec votre Claude » tant qu'il n'est pas branché
     await propagerPseudo();
   } catch (e) { console.warn('Profil', e); }
 }
