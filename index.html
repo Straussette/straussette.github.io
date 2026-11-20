@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-20.1">
+<meta name="app-version" content="2026-11-21.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -363,6 +363,7 @@
 <main class="wrap" id="vueCave">
   <div class="toolbar">
     <button class="btn primary" id="btnAccord" style="width:100%">🍽️ Que boire avec mon repas ?</button>
+    <button class="btn secondary" id="btnAilleursCave" style="width:100%">🥂 Je déguste une bouteille qui n'est pas dans ma cave</button>
     <input type="search" id="search" placeholder="Rechercher un domaine, une appellation…">
     <div class="chips" id="chips"></div>
     <div class="selects">
@@ -408,10 +409,10 @@
 
 <section class="wrap" id="vueBues" hidden style="padding:16px">
   <div class="vue-titre"><h2>Bouteilles dégustées</h2>
-    <button type="button" class="btn secondary petit-btn" id="btnAilleurs">🥂 Noter un vin bu ailleurs</button></div>
+    <button type="button" class="btn secondary petit-btn" id="btnAilleurs">🥂 Je déguste un vin hors de ma cave</button></div>
   <p class="petit" id="buesResume"></p>
   <ul class="liste-simple" id="listeBues" style="margin-top:12px"></ul>
-  <p class="empty" id="buesVide" hidden>Aucune bouteille ouverte pour l'instant. Quand vous en buvez une (« − » puis « Je l'ai bue », ou « J'ouvre celle-ci » dans « Que boire ? »), elle s'ajoute ici. Un vin goûté chez des amis ou au restaurant ? « 🥂 Noter un vin bu ailleurs ».</p>
+  <p class="empty" id="buesVide" hidden>Aucune bouteille ouverte pour l'instant. Quand vous en buvez une (« − » puis « Je l'ai bue », ou « J'ouvre celle-ci » dans « Que boire ? »), elle s'ajoute ici. Un vin goûté chez des amis ou au restaurant ? « 🥂 Je déguste un vin hors de ma cave ».</p>
 </section>
 
 <dialog id="dlgMoins">
@@ -575,7 +576,7 @@
       <span>📄 Importer une liste</span>
     </label>
     <p class="search-help" style="margin:0">Ou <button type="button" class="link" id="lotMain">✍️ saisir un vin à la main</button>
-      · <button type="button" class="link" id="lotAilleurs">🥂 noter un vin bu ailleurs</button></p>
+      · <button type="button" class="link" id="lotAilleurs">🥂 je déguste une bouteille qui n'est pas dans ma cave</button></p>
     <p class="info-claude" id="lotInfoClaude" hidden>🤖 Les photos et les listes seront lues par votre Claude (réglable dans Mon compte → Brancher mon Claude).</p>
     <p class="search-status" id="lotStatus" hidden></p>
     <a class="btn primary" id="lotClaude" target="_blank" rel="noopener" hidden>🤖 Ouvrir Claude pour les ajouter</a>
@@ -1314,7 +1315,7 @@ function ouvrirFormulaire(b = null, { ailleurs = false } = {}) {
   $('#qBloc').hidden = modeAilleurs;
   $('#prixBloc').hidden = modeAilleurs;
   $('#a-lieu').value = ''; $('#a-etat').value = 'point'; $('#a-sur20').value = ''; $('#a-avis').value = '';
-  $('#dlgTitle').textContent = b ? 'Modifier la bouteille' : modeAilleurs ? 'Un vin bu ailleurs' : 'Nouvelle bouteille';
+  $('#dlgTitle').textContent = b ? 'Modifier la bouteille' : modeAilleurs ? 'Je déguste une bouteille hors de ma cave' : 'Nouvelle bouteille';
   $('#btnDelete').hidden = !b;
   for (const k of CHAMPS) $('#f-' + k).value = b ? (b[k] ?? '') : '';
   if (!b) { $('#f-couleur').value = 'Rouge'; $('#f-quantite').value = modeAilleurs ? 0 : 1; }
@@ -3861,6 +3862,7 @@ $('#listeBues').addEventListener('click', async (e) => {
 });
 
 $('#btnAilleurs').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
+$('#btnAilleursCave').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
 
 function changerVue(v) {
   vueActive = v;
