@@ -1158,6 +1158,7 @@ async function traiterMessage(uid: string, m: any): Promise<unknown | null> {
         if (r && Array.isArray(r.__contenu)) return { jsonrpc: "2.0", id: m.id, result: { content: r.__contenu } };
         return { jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: JSON.stringify(r, null, 1) }], structuredContent: r } };
       } catch (e) {
+        console.log(`mcp erreur outil ${nom} : ${String((e as Error).message).slice(0, 200)}`);
         return { jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "Erreur : " + (e as Error).message }], isError: true } };
       }
     }
@@ -1166,8 +1167,19 @@ async function traiterMessage(uid: string, m: any): Promise<unknown | null> {
     case "prompts/list":
       return { jsonrpc: "2.0", id: m.id, result: { prompts: [] } };
     default:
+      console.log(`mcp méthode non prise en charge : ${String(m.method).slice(0, 60)}`);
       return erreurRpc(m.id, -32601, `méthode non prise en charge : ${m.method}`);
   }
+}
+
+// Journal de diagnostic (logs de la fonction) : seulement la méthode, l'outil et la version du protocole,
+// jamais les arguments ni la clé
+function journaliser(corps: any) {
+  try {
+    const liste = Array.isArray(corps) ? corps : [corps];
+    console.log("mcp " + liste.map((m: any) => [m?.method, m?.params?.name, m?.params?.protocolVersion]
+      .filter(Boolean).map((x) => String(x).slice(0, 60)).join(" ")).join(" | "));
+  } catch { /* rien */ }
 }
 
 Deno.serve(async (req) => {
@@ -1177,6 +1189,7 @@ Deno.serve(async (req) => {
   const cle = morceaux.at(-1) ?? "";
   if (req.method === "GET" || req.method === "DELETE") {
     // Pas de flux d'événements ni de session : tout passe par POST
+    console.log(`mcp ${req.method} refusé (405)`);
     return new Response(null, { status: 405, headers: { ...CORS, Allow: "POST" } });
   }
   if (req.method !== "POST") return new Response(null, { status: 405, headers: CORS });
@@ -1189,6 +1202,7 @@ Deno.serve(async (req) => {
   let corps: any;
   try { corps = await req.json(); } catch { return json(erreurRpc(null, -32700, "JSON illisible"), 400); }
 
+  journaliser(corps);
   if (Array.isArray(corps)) {
     const reponses = (await Promise.all(corps.map((m) => traiterMessage(uid!, m)))).filter((r) => r !== null);
     return reponses.length ? json(reponses) : new Response(null, { status: 202, headers: CORS });
