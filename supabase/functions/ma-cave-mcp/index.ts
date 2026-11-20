@@ -195,6 +195,8 @@ async function ecrireVins(uid: string, vins: Vin[]) {
     headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify(vins.map((v) => {
       const { photo, photo_path, ...data } = v;
+      // Un vin goûté ailleurs qui entre vraiment en cave perd sa marque horsCave (comme dans l'app)
+      if (data.horsCave && Number(data.quantite) > 0) delete data.horsCave;
       return { id: v.id, user_id: uid, data, modifie: maintenant };
     })),
   });
@@ -279,6 +281,7 @@ function resume(b: Vin) {
     emplacement: b.emplacement || undefined,
     fiche: !!b.description,
     domaine_presente: !!b.domaineInfo,
+    hors_cave: b.horsCave ? "goûté ailleurs (chez des amis, au restaurant), jamais en cave" : undefined,
   };
 }
 
@@ -1103,7 +1106,11 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
     case "degustees": {
       const depuis = vide(a.depuis) ? 0 : Date.parse(dateISO(a.depuis));
       const cave = await lireCave(uid);
-      const journal = cave.flatMap((b) => (b.ouvertures || []).map((d: string) => ({ date: d, id: b.id, vin: nomVin(b) })))
+      const journal = cave.flatMap((b) => (b.ouvertures || []).map((d: string) => ({
+        date: d, id: b.id, vin: nomVin(b),
+        // Bouteille bue ailleurs (chez des amis, au restaurant) : pas sortie de la cave
+        ailleurs: b.ailleurs && d in b.ailleurs ? (b.ailleurs[d] || "oui") : undefined,
+      })))
         .filter((x) => Date.parse(x.date) >= depuis)
         .sort((x, y) => y.date.localeCompare(x.date))
         .slice(0, 300);

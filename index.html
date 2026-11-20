@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-17.1">
+<meta name="app-version" content="2026-11-20.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -240,6 +240,9 @@
   dialog h2 { padding-right:40px; }
   form { padding:18px; display:grid; gap:12px; }
   form h2 { margin:0; font-size:1.35rem; }
+  /* Vin bu ailleurs : bloc lieu / état / note du formulaire */
+  .ailleurs-bloc { border:1px solid var(--border); border-radius:12px; padding:12px; margin:10px 0;
+    background:color-mix(in srgb, var(--accent) 5%, var(--surface)); }
   .photo-pick {
     display:grid; place-items:center; min-height:130px; border:2px dashed var(--border);
     border-radius:12px; cursor:pointer; overflow:hidden; color:var(--muted); text-align:center; padding:8px;
@@ -404,10 +407,11 @@
 </main>
 
 <section class="wrap" id="vueBues" hidden style="padding:16px">
-  <div class="vue-titre"><h2>Bouteilles dégustées</h2></div>
+  <div class="vue-titre"><h2>Bouteilles dégustées</h2>
+    <button type="button" class="btn secondary petit-btn" id="btnAilleurs">🥂 Noter un vin bu ailleurs</button></div>
   <p class="petit" id="buesResume"></p>
   <ul class="liste-simple" id="listeBues" style="margin-top:12px"></ul>
-  <p class="empty" id="buesVide" hidden>Aucune bouteille ouverte pour l'instant. Quand vous en buvez une (« − » puis « Je l'ai bue », ou « J'ouvre celle-ci » dans « Que boire ? »), elle s'ajoute ici.</p>
+  <p class="empty" id="buesVide" hidden>Aucune bouteille ouverte pour l'instant. Quand vous en buvez une (« − » puis « Je l'ai bue », ou « J'ouvre celle-ci » dans « Que boire ? »), elle s'ajoute ici. Un vin goûté chez des amis ou au restaurant ? « 🥂 Noter un vin bu ailleurs ».</p>
 </section>
 
 <dialog id="dlgMoins">
@@ -570,7 +574,8 @@
       <input type="file" id="lotListe" accept="image/*,application/pdf,.pdf,.csv,text/csv,.xlsx,.xls,.ods,.txt" multiple hidden>
       <span>📄 Importer une liste</span>
     </label>
-    <p class="search-help" style="margin:0">Ou <button type="button" class="link" id="lotMain">✍️ saisir un vin à la main</button></p>
+    <p class="search-help" style="margin:0">Ou <button type="button" class="link" id="lotMain">✍️ saisir un vin à la main</button>
+      · <button type="button" class="link" id="lotAilleurs">🥂 noter un vin bu ailleurs</button></p>
     <p class="info-claude" id="lotInfoClaude" hidden>🤖 Les photos et les listes seront lues par votre Claude (réglable dans Mon compte → Brancher mon Claude).</p>
     <p class="search-status" id="lotStatus" hidden></p>
     <a class="btn primary" id="lotClaude" target="_blank" rel="noopener" hidden>🤖 Ouvrir Claude pour les ajouter</a>
@@ -635,6 +640,28 @@
 
     <div class="fiche" id="fiche" hidden></div>
 
+    <div class="ailleurs-bloc" id="ailleursBloc" hidden>
+      <p class="petit" style="margin:0 0 8px">🥂 Un vin goûté chez des amis ou au restaurant : il va dans votre journal « Dégustées », avec sa fiche, sans entrer dans votre cave.</p>
+      <label class="f">Où, avec qui ? (facultatif)
+        <input id="a-lieu" autocomplete="off" maxlength="80" placeholder="ex. chez Romain, au restaurant…">
+      </label>
+      <div class="row">
+        <label class="f">Comment était-il ?
+          <select id="a-etat">
+            <option value="point">À point</option>
+            <option value="ferme">Encore fermé / trop jeune</option>
+            <option value="fatigue">Fatigué / sur le déclin</option>
+          </select>
+        </label>
+        <label class="f">Ma note /20 (facultatif)
+          <input id="a-sur20" type="number" inputmode="decimal" min="0" max="20" step="0.5">
+        </label>
+      </div>
+      <label class="f">Mon avis (facultatif)
+        <textarea id="a-avis" rows="2" maxlength="300" placeholder="Ce que vous en avez pensé…"></textarea>
+      </label>
+    </div>
+
     <label class="f">Domaine / Château
       <input id="f-domaine" autocomplete="off" placeholder="ex. Domaine Jamet">
     </label>
@@ -680,7 +707,7 @@
       </select>
     </label>
 
-    <label class="f">Nombre de bouteilles
+    <label class="f" id="qBloc">Nombre de bouteilles
       <div class="stepper">
         <button type="button" class="btn secondary" id="qMinus" aria-label="Moins">−</button>
         <input id="f-quantite" type="number" inputmode="numeric" min="0" value="1">
@@ -705,7 +732,7 @@
       <div class="fiche" id="gardeBloc" hidden></div>
       <div id="degustBloc" class="petit" hidden></div>
     </div>
-    <div class="row">
+    <div class="row" id="prixBloc">
       <label class="f">Prix d'achat (€ / bouteille)
         <input id="f-prix" type="number" inputmode="decimal" min="0" step="0.5">
       </label>
@@ -772,6 +799,8 @@ async function charger() {
 }
 
 async function enregistrer() {
+  // Un vin goûté ailleurs qui entre vraiment en cave (« + », ajout, lot…) perd sa marque horsCave
+  for (const b of bottles) if (b.horsCave && b.quantite > 0) delete b.horsCave;
   try {
     const db = await dbPromise;
     await new Promise((resolve, reject) => {
@@ -951,7 +980,8 @@ function carte(b, niveau = 0) {
 
 function afficherChips() {
   const options = ['Tous', ...COULEURS];
-  const nBus = bottles.filter((b) => b.quantite <= 0).length;
+  // Les vins seulement goûtés ailleurs ne sont pas des vins « bus » de la cave : ils restent dans « Dégustées »
+  const nBus = bottles.filter((b) => b.quantite <= 0 && !b.horsCave).length;
   $('#chips').innerHTML = options.map((o) => {
     const n = o === 'Tous'
       ? bottles.reduce((s, b) => s + b.quantite, 0)
@@ -966,7 +996,7 @@ function afficher() {
 
   const cru = $('#cru').value;
   let items = bottles.filter((b) =>
-    (filtre === '__bus' ? b.quantite <= 0 : b.quantite > 0) &&
+    (filtre === '__bus' ? b.quantite <= 0 && !b.horsCave : b.quantite > 0) &&
     (filtre === 'Tous' || filtre === '__bus' || b.couleur === filtre) &&
     (cru === 'tous' || (cru === 'gcpc' ? !!niveauCru(b) : niveauCru(b) === cru)) &&
     (!q || norm([b.domaine, b.cuvee, b.appellation, b.classement, b.region, b.millesime, b.emplacement].join(' ')).includes(q)));
@@ -1273,13 +1303,21 @@ function cleGroupe(b, groupe) {
 const CHAMPS = ['domaine', 'cuvee', 'appellation', 'format', 'classement', 'region', 'millesime', 'couleur', 'quantite', 'boireDe', 'boireA', 'prix', 'emplacement', 'notes'];
 $('#f-couleur').innerHTML = COULEURS.map((c) => `<option>${c}</option>`).join('');
 
-function ouvrirFormulaire(b = null) {
+// « Vin bu ailleurs » : même formulaire (recherche, photo, fiche), mais sans stock ni prix ;
+// le vin va dans le journal « Dégustées » (ouvertures + lieu dans ailleurs[date]) sans entrer en cave
+let modeAilleurs = false;
+function ouvrirFormulaire(b = null, { ailleurs = false } = {}) {
   editingId = b ? b.id : null;
   pendingPhoto = null;
-  $('#dlgTitle').textContent = b ? 'Modifier la bouteille' : 'Nouvelle bouteille';
+  modeAilleurs = ailleurs && !b;
+  $('#ailleursBloc').hidden = !modeAilleurs;
+  $('#qBloc').hidden = modeAilleurs;
+  $('#prixBloc').hidden = modeAilleurs;
+  $('#a-lieu').value = ''; $('#a-etat').value = 'point'; $('#a-sur20').value = ''; $('#a-avis').value = '';
+  $('#dlgTitle').textContent = b ? 'Modifier la bouteille' : modeAilleurs ? 'Un vin bu ailleurs' : 'Nouvelle bouteille';
   $('#btnDelete').hidden = !b;
   for (const k of CHAMPS) $('#f-' + k).value = b ? (b[k] ?? '') : '';
-  if (!b) { $('#f-couleur').value = 'Rouge'; $('#f-quantite').value = 1; }
+  if (!b) { $('#f-couleur').value = 'Rouge'; $('#f-quantite').value = modeAilleurs ? 0 : 1; }
   montrerPhoto(b && b.photo);
   ficheEnCours = b && b.description ? Object.fromEntries(CHAMPS_FICHE.map((k) => [k, b[k]])) : null;
   afficherFiche(ficheEnCours);
@@ -1790,6 +1828,7 @@ $('#photo').addEventListener('change', async (e) => {
 $('#qMinus').onclick = () => { const i = $('#f-quantite'); i.value = Math.max(0, (parseInt(i.value, 10) || 0) - 1); };
 $('#qPlus').onclick = () => { const i = $('#f-quantite'); i.value = (parseInt(i.value, 10) || 0) + 1; };
 $('#btnCancel').onclick = () => $('#dlg').close();
+$('#dlg').addEventListener('close', () => { modeAilleurs = false; });
 
 $('#form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1806,6 +1845,7 @@ $('#form').addEventListener('submit', async (e) => {
     return;
   }
 
+  if (modeAilleurs) return enregistrerAilleurs(data);
   if (editingId) {
     const b = bottles.find((x) => x.id === editingId);
     Object.assign(b, data);
@@ -1824,6 +1864,38 @@ $('#form').addEventListener('submit', async (e) => {
   $('#dlg').close();
   afficher();
 });
+
+// Enregistre un vin bu ailleurs : s'il est déjà connu (en cave ou déjà goûté), la date s'ajoute à son
+// journal sans toucher au stock ; sinon il est créé à 0 bouteille, marqué horsCave
+async function enregistrerAilleurs(data) {
+  const quand = new Date().toISOString();
+  const lieu = $('#a-lieu').value.trim().slice(0, 80);
+  const sur20 = parseFloat(String($('#a-sur20').value).replace(',', '.'));
+  const degust = { date: quand, etat: $('#a-etat').value || 'point', note: $('#a-avis').value.trim().slice(0, 300),
+    ...(sur20 >= 0 && sur20 <= 20 ? { sur20 } : {}) };
+  data.quantite = 0;
+  let b = bottles.find((x) => cleVin(x) === cleVin(data));
+  if (b) {
+    // Vin déjà connu : on complète sa fiche si elle manquait, sans toucher au stock
+    for (const k of CHAMPS_FICHE) if (data[k] != null && data[k] !== '' && (b[k] == null || b[k] === '')) b[k] = data[k];
+    if (pendingPhoto && !b.photo) b.photo = pendingPhoto;
+  } else {
+    const { garde, degustations, quantite, prix, emplacement, ...vin } = data;
+    b = { id: nouvelId(), ...vin, quantite: 0, horsCave: true, photo: pendingPhoto, ajoute: Date.now() };
+    if (garde) b.garde = garde;
+    bottles.push(b);
+  }
+  b.ouvertures = [...(b.ouvertures || []), quand];
+  b.ailleurs = { ...(b.ailleurs || {}), [quand]: lieu };
+  b.degustations = [...(b.degustations || []), ...(data.degustations || []).filter((d) => !(b.degustations || []).includes(d)), degust];
+  await enregistrer();
+  modeAilleurs = false;
+  $('#dlg').close();
+  afficher();
+  if (vueActive === 'bues') afficherBues();
+  toast('🥂 Noté dans « Dégustées ».' + (b.description ? '' : ' Sa fiche peut être complétée depuis la page du vin.'));
+  ouvrirVue(b);
+}
 
 $('#btnDelete').onclick = async () => {
   if (!confirm('Supprimer définitivement ce vin de la cave ?')) return;
@@ -2161,7 +2233,7 @@ const FORMATS_BOUTEILLE = ['', 'Demi-bouteille', 'Clavelin', 'Magnum', 'Double m
 function vinAutreFormat(b, format, nombre) {
   const existant = bottles.find((x) => x !== b && cleVin(x) === cleVin({ ...b, format }));
   if (existant) { existant.quantite += nombre; return existant; }
-  const { id, photo, photo_path, partageId, garde, degustations, ouvertures, prix, emplacement, ajoute, ...reste } = b;
+  const { id, photo, photo_path, partageId, garde, degustations, ouvertures, ailleurs, horsCave, prix, emplacement, ajoute, ...reste } = b;
   const copie = { ...reste, id: nouvelId(), format, quantite: nombre, prix: '', emplacement: '', photo: null, ajoute: Date.now() };
   bottles.push(copie);
   return copie;
@@ -2217,7 +2289,8 @@ function afficherVue(message = '', erreur = false, enCours = false) {
       <input id="af-qte" type="number" inputmode="numeric" min="1" value="1" style="width:70px" aria-label="Nombre">
       <button type="button" class="btn primary petit-btn" data-vue="autreFormatOk">Ajouter</button>
     </div>
-    ${b.quantite === 0 ? `<div class="petit">📖 Plus en cave — ce vin reste en mémoire.${(b.ouvertures || []).length ? ` Dernière bouteille ouverte le ${new Date(b.ouvertures.at(-1)).toLocaleDateString('fr-FR')}.` : ''}</div>`
+    ${b.quantite === 0 && b.horsCave ? `<div class="petit">🥂 Goûté ailleurs, pas dans votre cave. Vous en voulez ? « + » l'ajoute à votre cave.</div>`
+      : b.quantite === 0 ? `<div class="petit">📖 Plus en cave — ce vin reste en mémoire.${(b.ouvertures || []).length ? ` Dernière bouteille ouverte le ${new Date(b.ouvertures.at(-1)).toLocaleDateString('fr-FR')}.` : ''}</div>`
       : (b.emplacement ? `<div class="petit">📍 ${esc(b.emplacement)}</div>` : '')}
     ${(b.ouvertures || []).length ? `<div class="petit">🍾 ${b.ouvertures.length} bouteille${b.ouvertures.length > 1 ? 's' : ''} ouverte${b.ouvertures.length > 1 ? 's' : ''} : ${b.ouvertures.slice(-6).map((d) => new Date(d).toLocaleDateString('fr-FR')).join(', ')}${b.ouvertures.length > 6 ? '…' : ''}</div>` : ''}
 
@@ -2866,6 +2939,7 @@ $('#lotDemander').onclick = async () => {
   } catch (err) { lotStatut('Échec : ' + err.message, true); }
 };
 $('#lotMain').onclick = () => { if (lotOccupe) return; $('#dlgLot').close(); ouvrirFormulaire(); };
+$('#lotAilleurs').onclick = () => { if (lotOccupe) return; $('#dlgLot').close(); ouvrirFormulaire(null, { ailleurs: true }); };
 
 /* ---------- Sauvegarde / restauration ---------- */
 $('#btnExport').onclick = () => {
@@ -3736,7 +3810,8 @@ function afficherBues() {
   const maintenant = new Date();
   const total = (filtre) => {
     const l = lignes.filter(filtre);
-    const v = l.reduce((s, x) => s + (valeurUnitaire(x.b) || 0), 0);
+    // Les vins bus ailleurs ne sortent pas de la cave : ils ne comptent pas dans la valeur bue
+    const v = l.filter((x) => !(x.b.ailleurs && x.d in x.b.ailleurs)).reduce((s, x) => s + (valeurUnitaire(x.b) || 0), 0);
     return `${l.length} bouteille${l.length > 1 ? 's' : ''}${v ? ` (≈ ${fmtEuro(v)})` : ''}`;
   };
   $('#buesResume').textContent = lignes.length
@@ -3758,8 +3833,9 @@ function afficherBues() {
           <strong>${esc(nomVin(b))}</strong>
           <span class="petit">${esc(date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }))}</span>
         </div>
+        ${b.ailleurs && d in b.ailleurs ? `<div class="petit">🥂 Bu ailleurs${b.ailleurs[d] ? ' · ' + esc(b.ailleurs[d]) : ''}</div>` : ''}
         ${degust ? `<div class="petit">📝 ${esc(ETATS_DEGUST[degust.etat] || degust.etat)}${degust.sur20 != null ? ` · ${esc(String(degust.sur20).replace('.', ','))}/20` : ''}${degust.note ? ' — ' + esc(degust.note) : ''}</div>` : ''}
-        <div class="petit"><button type="button" class="link" data-bue="retirer">✕ Ce n'était pas une bouteille bue</button></div>
+        <div class="petit"><button type="button" class="link" data-bue="retirer">✕ ${b.ailleurs && d in b.ailleurs ? 'Retirer du journal' : 'Ce n\'était pas une bouteille bue'}</button></div>
       </li>`;
   }).join('');
 }
@@ -3772,13 +3848,19 @@ $('#listeBues').addEventListener('click', async (e) => {
   if (act === 'voir') return ouvrirVue(b);
   if (act === 'retirer') {
     if (!confirm(`Retirer cette ligne du journal ?\n${nomVin(b)}\nLe stock ne change pas.`)) return;
+    const date = (b.ouvertures || [])[Number(li.dataset.bueI)];
     b.ouvertures = (b.ouvertures || []).filter((_, k) => k !== Number(li.dataset.bueI));
+    if (b.ailleurs && date in b.ailleurs) { delete b.ailleurs[date]; if (!Object.keys(b.ailleurs).length) delete b.ailleurs; }
     if (!b.ouvertures.length) delete b.ouvertures;
+    // Un vin seulement goûté ailleurs, sans autre trace : il disparaît avec sa dernière ligne
+    if (b.horsCave && b.quantite === 0 && !b.ouvertures) bottles = bottles.filter((x) => x !== b);
     await enregistrer();
     afficher();
     afficherBues();
   }
 });
+
+$('#btnAilleurs').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
 
 function changerVue(v) {
   vueActive = v;
