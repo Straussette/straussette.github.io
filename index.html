@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-21.1">
+<meta name="app-version" content="2026-11-21.2">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -3632,10 +3632,14 @@ function choisirClaudeParDefaut(oui) {
     .catch(() => {});
 }
 
-const lienClaude = (message) => 'https://claude.ai/new?q=' + encodeURIComponent(message);
+// claude.ai n'affiche pas toujours d'emblée tous les outils d'un connecteur (chargement à la demande) :
+// sans ce rappel, Claude répond parfois qu'un outil cité « n'est pas disponible » au lieu de le chercher
+const RAPPEL_OUTILS = "\n\n(Les outils cités sont ceux du connecteur Ma Cave. S'ils ne sont pas affichés, cherche-les parmi tes outils avant de dire qu'ils manquent.)";
+const avecRappel = (message) => message + RAPPEL_OUTILS;
+const lienClaude = (message) => 'https://claude.ai/new?q=' + encodeURIComponent(avecRappel(message));
 // Ouvre une conversation Claude avec la demande déjà écrite (copiée aussi, au cas où)
 function ouvrirDansClaude(message) {
-  try { navigator.clipboard?.writeText(message).catch(() => {}); } catch {}
+  try { navigator.clipboard?.writeText(avecRappel(message)).catch(() => {}); } catch {}
   const url = lienClaude(message);
   const w = window.open(url, '_blank');
   if (w) w.opener = null; else location.href = url;
