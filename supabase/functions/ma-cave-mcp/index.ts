@@ -12,7 +12,7 @@
 // À déployer sans vérification du JWT (verify_jwt = false) : Claude n'envoie pas de jeton Supabase.
 
 const NOM = "ma-cave";
-const VERSION = "1.6.0";
+const VERSION = "1.7.0";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://macave.pstrauss.org). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
@@ -26,6 +26,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Photos et listes envoyées depuis l'app (imports) : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Pour chaque vin, fais aussi une recherche web pour sa fiche (description, cépages, accords, service, apogée, fenêtre boireDe/boireA, prix du marché, sources) ; si la liste est longue, fais au mieux et laisse sans fiche ce que tu n'as pas trouvé. Présente aussi chaque domaine qui ne l'est pas encore dans sa cave (ma_cave indique domaine_presente) : histoire, vignoble, viticulture, style, cuvées phares, dans domaineInfo et domaineSite (une seule fois par domaine suffit). N'ajoute PAS toi-même ces vins (ni ajouter_vins, ni ajouter_vins_commande) : envoie ta lecture avec proposer_vins, puis dis à l'utilisateur d'ouvrir l'app Ma Cave, où il vérifie les quantités et les formats et valide l'ajout.
 - Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé), et enregistrer_domaine_commande présente chaque domaine qui ne l'est pas encore (histoire, vignoble, style, cuvées phares) : tous les participants les voient en touchant le vin dans la commande. Pour une offre de caviste, donne aussi ta note sur 20 et un verdict franc par vin (note, verdict dans proposer_vins) et une synthèse (synthese : en_bref, a_verifier, lien) ; pour une commande déjà créée, enregistre-les avec enregistrer_synthese_commande. Les notes combinent réputation du climat, critiques et rapport qualité-prix : dis que ce n'est pas une dégustation.
 - Conseils d'achat et goûts : au début d'une conversation de conseil (quoi acheter, compléter ou rééquilibrer sa cave, quoi boire selon ses goûts), lis profil_sommelier : ses préférences, ce que tu as déjà retenu de lui, ton dernier conseil et la répartition de sa cave (régions, appellations, couleurs, garde, prix). Appuie-toi sur ces chiffres : dis ce qui manque ou déséquilibre (une région trop dominante, des appellations absentes, trop peu de blancs ou de vins prêts à boire) et propose des achats concrets (domaines, cuvées, appellations, millésimes, fourchette de prix) dans son budget, en vérifiant sur le web prix et disponibilité. Enregistre ensuite ton conseil avec enregistrer_conseil : il le retrouve dans l'onglet « 🎯 Conseils » de l'app. Quand il t'apprend quelque chose de durable sur ses goûts (« je n'aime pas les vins boisés », « budget 40 € max », « je veux plus de Rhône »), note-le avec noter_preference sans attendre qu'il te le demande, et supprime avec oublier_preference ce qui n'est plus vrai.
+- Conseil personnel sur une commande groupée (« qu'est-ce que je prends ? ») : lis profil_sommelier (goûts, budget, répartition de sa cave) et vins_commande (prix proposé, prix du marché, appellation, ce qu'il a déjà en cave du même village). Conseille-lui quelques vins et combien en prendre, en expliquant pour chacun : bon prix par rapport au marché, complète un manque de sa cave (appellation, région, couleur, vins prêts à boire), colle à ses goûts et à son budget. Dis aussi franchement ce qu'il peut laisser (déjà bien fourni, prix élevé). Enregistre-le avec enregistrer_conseil_commande : il le voit dans la commande, et lui seul.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
 // ---------- Supabase (clé secrète du projet) ----------
@@ -631,6 +632,32 @@ const OUTILS = [
     annotations: { title: "Bouteilles bues", readOnlyHint: true },
   },
   {
+    name: "enregistrer_conseil_commande",
+    description: "Enregistre ton conseil personnel pour une commande groupée (organisée ou rejointe) : quels vins prendre, combien et pourquoi (prix, complément de sa cave, goûts). Il le voit dans la commande, et lui seul ; il remplace ton conseil précédent pour cette commande.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        commande_id: { ...texte, description: "Identifiant de la commande (vins_commande ou mes_commandes)" },
+        resume: { ...texte, description: "Ton conseil en 2 à 5 phrases : ce qu'il faut prendre, ce qu'il peut laisser" },
+        vins: {
+          type: "array",
+          maxItems: 20,
+          items: {
+            type: "object",
+            properties: {
+              vin_id: { ...texte, description: "vin_id donné par vins_commande" },
+              quantite: { type: "integer", minimum: 0, maximum: 120, description: "Nombre de bouteilles conseillé (0 = à laisser)" },
+              pourquoi: { ...texte, description: "Une ou deux phrases : prix, complément de sa cave, goûts" },
+            },
+            required: ["vin_id", "pourquoi"],
+          },
+        },
+      },
+      required: ["commande_id", "resume", "vins"],
+    },
+    annotations: { title: "Conseil perso sur une commande", readOnlyHint: false, destructiveHint: false },
+  },
+  {
     name: "profil_sommelier",
     description: "À lire au début d'une conversation de conseil : préférences et goûts de l'utilisateur (saisis dans l'app), ce que tu as retenu de lui (notes), ton dernier conseil d'achat, et la répartition de sa cave (régions, appellations, couleurs, garde, prix) pour repérer ce qui manque.",
     inputSchema: { type: "object", properties: {} },
@@ -1114,11 +1141,21 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
 
     case "vins_commande": {
       const c = await commandeVisible(uid, a.commande_id);
-      const vins = await sb(`/rest/v1/commande_vins?select=id,data,prix&commande_id=eq.${c.id}&order=cree`) || [];
+      const [vins, cave] = await Promise.all([
+        sb(`/rest/v1/commande_vins?select=id,data,prix&commande_id=eq.${c.id}&order=cree`).then((r: any) => r || []),
+        lireCave(uid),
+      ]);
+      // Ce qu'il a déjà en cave de la même appellation (sans la mention de cru), pour juger du complément
+      const sansCru = (x: unknown) => norm(String(x || "").replace(/\s+(premier cru|1er cru|grand cru)\b.*$/i, ""));
+      const enCave = (v: Vin) => cave.filter((b) => Number(b.quantite) > 0 && sansCru(b.appellation) && sansCru(b.appellation) === sansCru(v.appellation))
+        .reduce((s, b) => s + Number(b.quantite), 0);
       return {
         commande: c.titre,
         vins: vins.map((v: any) => ({
           vin_id: v.id, vin: nomVin(v.data || {}), prix_propose_eur: Number(v.prix) || undefined,
+          appellation: v.data?.appellation || undefined, couleur: v.data?.couleur || undefined, format: v.data?.format || undefined,
+          prix_marche_eur: (() => { const f = v.data?.fiche || v.data || {}; const lo = Number(f.prixMin) || 0, hi = Number(f.prixMax) || 0; return lo || hi ? (lo && hi ? `${lo}-${hi}` : String(lo || hi)) : undefined; })(),
+          deja_en_cave_meme_appellation: enCave(v.data || {}),
           fiche: !!(v.data?.fiche?.description || v.data?.description), domaine_presente: !!(v.data?.domaineInfo || v.data?.fiche?.domaineInfo),
           note: v.data?.avis?.note ?? undefined,
         })),
@@ -1201,6 +1238,27 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       const partage = await publier(uid, cd, { presentation, site, nom: memes[0].data.domaine }, false);
       await cloreDemandes(uid, cd);
       return { ok: true, vins_mis_a_jour: changes.length, deja_presentes: memes.length - changes.length, catalogue: partage };
+    }
+
+    case "enregistrer_conseil_commande": {
+      const c = await commandeVisible(uid, a.commande_id);
+      const ids = new Map(((await sb(`/rest/v1/commande_vins?select=id,data&commande_id=eq.${c.id}`)) || []).map((v: any) => [v.id, v]));
+      const resume = borne(a.resume, 2000);
+      const vins = (Array.isArray(a.vins) ? a.vins : []).slice(0, 20)
+        .filter((x: Vin) => ids.has(String(x?.vin_id)))
+        .map((x: Vin) => ({
+          vin_id: String(x.vin_id), nom: nomVin((ids.get(String(x.vin_id)) as any)?.data || {}),
+          quantite: Number.isInteger(Number(x.quantite)) ? Math.max(0, Math.min(120, Number(x.quantite))) : null,
+          pourquoi: borne(x.pourquoi, 500),
+        }));
+      if (!resume || !vins.length) throw new Error("il faut un résumé et au moins un vin de la commande (vin_id de vins_commande)");
+      const som = await sb(`/rest/v1/sommelier?select=conseils_commandes&user_id=eq.${uid}`);
+      const tous: Vin = som?.[0]?.conseils_commandes ?? {};
+      tous[c.id] = { resume, vins, le: new Date().toISOString() };
+      // 30 commandes au plus : les plus anciens conseils partent
+      const garder = Object.entries(tous).sort((x: any, y: any) => String(y[1]?.le).localeCompare(String(x[1]?.le))).slice(0, 30);
+      await ecrireSommelier(uid, { conseils_commandes: Object.fromEntries(garder) });
+      return { ok: true, vins: vins.length, message: "Conseil visible dans la commande, pour lui seul" };
     }
 
     case "profil_sommelier": {
