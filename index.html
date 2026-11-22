@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-21.2">
+<meta name="app-version" content="2026-11-22.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -163,6 +163,20 @@
     border-bottom:2px solid transparent; cursor:pointer; white-space:nowrap;
   }
   .onglets button[aria-selected="true"] { color:var(--accent); border-bottom-color:var(--accent); }
+  /* Onglet Conseils (sommelier) */
+  .carte-conseil { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin:0 0 14px; }
+  .carte-conseil h3 { margin:0 0 10px; font-size:1.05rem; }
+  .barre-rep { display:grid; grid-template-columns:minmax(0, 9rem) 1fr auto; gap:8px; align-items:center; font-size:.88rem; margin:4px 0; }
+  .barre-rep .nom { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .barre-rep .jauge { height:10px; border-radius:5px; background:color-mix(in srgb, var(--accent) 12%, var(--surface)); overflow:hidden; }
+  .barre-rep .jauge span { display:block; height:100%; background:var(--accent); border-radius:5px; }
+  .barre-rep .val { color:var(--muted); white-space:nowrap; }
+  .rep-titre { font-size:.8rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:12px 0 4px; }
+  .pistes { margin:12px 0 0; padding-left:20px; font-size:.92rem; }
+  .pistes li { margin:4px 0; }
+  .gouts-couleurs { display:flex; flex-wrap:wrap; gap:6px 14px; margin:0 0 10px; font-size:.92rem; }
+  .achat { border-top:1px solid var(--border); padding:8px 0; }
+  .achat:first-child { border-top:0; }
   .vue-titre { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px; }
   .vue-titre h2 { margin:0; font-size:1.3rem; }
   .carte-simple {
@@ -345,6 +359,7 @@
   <button data-vue="cave" aria-selected="true">🍷 Ma cave</button>
   <button data-vue="bues" aria-selected="false">🍾 Dégustées</button>
   <button data-vue="commandes" aria-selected="false">📦 Commandes</button>
+  <button data-vue="conseils" aria-selected="false">🎯 Conseils</button>
   <button data-vue="admin" aria-selected="false" hidden id="ongletAdmin">⚙️ Admin</button>
 </nav>
 
@@ -426,6 +441,71 @@
     <p class="petit" style="margin:10px 0 0">Une bouteille bue est notée dans l'onglet « 🍾 Dégustées ». Une correction change seulement le stock.</p>
   </div>
 </dialog>
+
+<section class="wrap" id="vueConseils" hidden style="padding:16px">
+  <div class="vue-titre"><h2>Mon sommelier</h2></div>
+  <p class="petit" style="margin-top:0">Ce que dit votre cave, vos goûts, et les conseils d'achat de votre Claude pour la compléter.</p>
+
+  <div class="carte-conseil">
+    <h3>🍇 Ma cave en un coup d'œil</h3>
+    <div id="cnsRepartition"></div>
+    <div id="cnsPistes"></div>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>🛒 Que devrais-je acheter ?</h3>
+    <div id="cnsConseil"></div>
+    <div class="actions" style="margin:10px 0 0; flex-wrap:wrap">
+      <button type="button" class="btn primary petit-btn" id="cnsDemander">🤖 Demander à mon Claude quoi acheter</button>
+    </div>
+    <p class="petit" id="cnsSansClaude" hidden style="margin:8px 0 0">Les conseils d'achat se font avec votre propre Claude, qui voit toute votre cave et vos goûts : <button type="button" class="link" data-claude="brancher">🤖 brancher mon Claude</button>.</p>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>❤️ Mes goûts</h3>
+    <p class="petit" style="margin-top:0">Votre Claude les lit au début de chaque conversation de conseil. Tout est facultatif.</p>
+    <form id="formGouts">
+      <div class="gouts-couleurs" id="gCouleurs">
+        <label><input type="checkbox" value="Rouge"> Rouge</label>
+        <label><input type="checkbox" value="Blanc"> Blanc</label>
+        <label><input type="checkbox" value="Rosé"> Rosé</label>
+        <label><input type="checkbox" value="Effervescent"> Effervescent</label>
+        <label><input type="checkbox" value="Liquoreux"> Liquoreux</label>
+      </div>
+      <label class="f">Ce que j'aime (régions, appellations, styles, cépages)
+        <textarea id="gAime" rows="2" maxlength="500" placeholder="ex. pinots fins et digestes, Côte de Nuits, syrah du Rhône nord"></textarea>
+      </label>
+      <label class="f">Ce que j'aime moins
+        <textarea id="gAimePas" rows="2" maxlength="500" placeholder="ex. vins très boisés, blancs trop gras"></textarea>
+      </label>
+      <label class="f">Ce que j'aimerais découvrir
+        <input id="gDecouvrir" maxlength="300" placeholder="ex. Jura, Piémont, vins nature">
+      </label>
+      <div class="row">
+        <label class="f">Budget habituel (€ / bouteille)
+          <input id="gBudget" maxlength="40" placeholder="ex. 20-50">
+        </label>
+        <label class="f">Ma cave sert surtout à
+          <select id="gUsage">
+            <option value="">—</option>
+            <option value="quotidien">boire au quotidien</option>
+            <option value="equilibre">un peu des deux</option>
+            <option value="garde">faire vieillir de belles bouteilles</option>
+          </select>
+        </label>
+      </div>
+      <label class="f">Autre chose à savoir
+        <textarea id="gAutre" rows="2" maxlength="500" placeholder="ex. place pour 200 bouteilles, beaucoup de dîners entre amis"></textarea>
+      </label>
+      <div class="actions" style="margin:8px 0 0"><button type="submit" class="btn primary petit-btn">Enregistrer mes goûts</button></div>
+    </form>
+  </div>
+
+  <div class="carte-conseil" id="cnsNotesBloc" hidden>
+    <h3>🧠 Ce que mon Claude a retenu</h3>
+    <ul class="liste-simple" id="cnsNotes"></ul>
+  </div>
+</section>
 
 <section class="wrap" id="vueCommandes" hidden style="padding:16px">
   <div class="vue-titre">
@@ -3866,6 +3946,145 @@ $('#listeBues').addEventListener('click', async (e) => {
 });
 
 $('#btnAilleurs').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
+
+/* ---------- Conseils (sommelier) ---------- */
+// Répartition de la cave calculée sur l'appareil (régions, appellations, couleurs, garde) + pistes simples ;
+// goûts, notes retenues par Claude et dernier conseil dans la table sommelier (une ligne par compte)
+let sommelier = { preferences: {}, notes: [], conseil: null };
+const REGIONS_REPERES = ['Bourgogne', 'Bordeaux', 'Rhône', 'Loire', 'Champagne', 'Alsace', 'Jura', 'Languedoc', 'Provence', 'Beaujolais', 'Italie', 'Espagne'];
+const VILLAGES_REPERES = ['Gevrey-Chambertin', 'Morey-Saint-Denis', 'Chambolle-Musigny', 'Vosne-Romanée', 'Nuits-Saint-Georges', 'Corton',
+  'Savigny-lès-Beaune', 'Beaune', 'Pommard', 'Volnay', 'Meursault', 'Puligny-Montrachet', 'Chassagne-Montrachet', 'Chablis'];
+
+function repartir(stock, cle) {
+  const m = new Map();
+  for (const b of stock) {
+    const k = cle(b) || 'Inconnu';
+    const x = m.get(k) || { n: 0, v: 0 };
+    x.n += b.quantite; x.v += (valeurUnitaire(b) || 0) * b.quantite;
+    m.set(k, x);
+  }
+  return [...m.entries()].sort((a, b) => b[1].n - a[1].n);
+}
+function barresRep(titre, lignes, total, max = 6) {
+  if (!lignes.length) return '';
+  const reste = lignes.slice(max);
+  const vues = reste.length ? [...lignes.slice(0, max), ['Autres', reste.reduce((s, [, x]) => ({ n: s.n + x.n, v: s.v + x.v }), { n: 0, v: 0 })]] : lignes;
+  return `<div class="rep-titre">${esc(titre)}</div>` + vues.map(([nom, x]) => {
+    const pct = Math.round(100 * x.n / total);
+    return `<div class="barre-rep"><span class="nom">${esc(nom)}</span><span class="jauge"><span style="width:${pct}%"></span></span><span class="val">${pct} % · ${x.n}</span></div>`;
+  }).join('');
+}
+
+function pistesCave(stock, total) {
+  const p = [];
+  const regions = repartir(stock, (b) => regionVin(b).region);
+  const [premiere, x] = regions[0] || [];
+  if (premiere && x.n / total >= 0.55) {
+    const absentes = REGIONS_REPERES.filter((r) => !regions.some(([n]) => norm(n) === norm(r)));
+    p.push(`Votre cave est très <strong>${esc(premiere)}</strong> (${Math.round(100 * x.n / total)} % des bouteilles).${absentes.length ? ` Absentes : ${esc(absentes.slice(0, 6).join(', '))}.` : ''}`);
+  }
+  // En Bourgogne : les grands villages peu ou pas représentés
+  const bourgogne = stock.filter((b) => regionVin(b).region === 'Bourgogne');
+  if (bourgogne.length >= 10) {
+    const parVillage = new Map(repartir(bourgogne, (b) => appellationVillage(b)));
+    const peu = VILLAGES_REPERES.map((v) => [v, parVillage.get(v)?.n || 0]).filter(([, n]) => n <= 1);
+    if (peu.length) p.push(`En Bourgogne, peu ou pas de : ${peu.map(([v, n]) => `${esc(v)} (${n})`).join(', ')}.`);
+  }
+  const couleurs = new Map(repartir(stock, (b) => b.couleur));
+  const blancs = couleurs.get('Blanc')?.n || 0;
+  if (blancs / total < 0.2) p.push(`Peu de blancs : ${Math.round(100 * blancs / total)} % de la cave.`);
+  if (!couleurs.get('Effervescent')) p.push('Aucun effervescent (champagne, crémant) pour l\'apéritif.');
+  const prets = stock.filter((b) => ['ok', 'vite'].includes(statut(b)?.cls)).reduce((s, b) => s + b.quantite, 0);
+  if (prets / total < 0.3) p.push(`Seulement ${Math.round(100 * prets / total)} % de bouteilles prêtes à boire : de quoi patienter avec des vins à boire jeunes.`);
+  const urgent = stock.filter((b) => statut(b)?.cls === 'passe').reduce((s, b) => s + b.quantite, 0);
+  if (urgent) p.push(`${urgent} bouteille${urgent > 1 ? 's' : ''} à boire d'urgence.`);
+  return p;
+}
+
+async function chargerSommelier() {
+  if (!session) return;
+  try {
+    const r = await sbFetch(`/rest/v1/sommelier?select=preferences,notes,conseil&user_id=eq.${moi()}`);
+    sommelier = { ...(r?.[0] || { preferences: {}, notes: [], conseil: null }), uid: moi() };
+  } catch { /* hors ligne : on garde ce qu'on a */ }
+}
+
+function afficherConseils() {
+  const stock = bottles.filter((b) => b.quantite > 0);
+  const total = stock.reduce((s, b) => s + b.quantite, 0);
+  if (!total) {
+    $('#cnsRepartition').innerHTML = '<p class="petit" style="margin:0">Ajoutez quelques bouteilles : la répartition de votre cave s\'affichera ici.</p>';
+    $('#cnsPistes').innerHTML = '';
+  } else {
+    $('#cnsRepartition').innerHTML =
+      barresRep('Régions', repartir(stock, (b) => regionVin(b).region), total) +
+      barresRep('Appellations', repartir(stock, (b) => appellationVillage(b) || 'Inconnue'), total, 8) +
+      barresRep('Couleurs', repartir(stock, (b) => b.couleur), total);
+    const pistes = pistesCave(stock, total);
+    $('#cnsPistes').innerHTML = pistes.length ? `<div class="rep-titre">Pistes</div><ul class="pistes">${pistes.map((x) => `<li>${x}</li>`).join('')}</ul>` : '';
+  }
+  afficherSommelier();
+  chargerSommelier().then(afficherSommelier);
+  lireEtatClaude().then(() => afficherSommelier()).catch(() => {});
+}
+
+function afficherSommelier() {
+  // Données d'un autre compte (changement de compte sur l'appareil) : on ne les montre pas
+  if (sommelier.uid !== session?.user?.id) sommelier = { preferences: {}, notes: [], conseil: null, uid: session?.user?.id };
+  const g = sommelier.preferences || {};
+  if (!$('#formGouts').contains(document.activeElement)) {
+    for (const c of $('#gCouleurs').querySelectorAll('input')) c.checked = (g.couleurs || []).includes(c.value);
+    $('#gAime').value = g.aime || ''; $('#gAimePas').value = g.aimePas || ''; $('#gDecouvrir').value = g.decouvrir || '';
+    $('#gBudget').value = g.budget || ''; $('#gUsage').value = g.usage || ''; $('#gAutre').value = g.autre || '';
+  }
+  const c = sommelier.conseil;
+  $('#cnsConseil').innerHTML = c ? `<p class="petit" style="margin:0 0 6px">Dernier conseil de votre Claude · ${esc(new Date(c.le).toLocaleDateString('fr-FR'))}</p>
+    <p style="margin:0 0 8px; white-space:pre-line">${esc(c.resume)}</p>
+    ${(c.achats || []).map((a) => `<div class="achat"><strong>${esc(a.vin)}</strong>${a.prix ? ` <span class="petit">· ${esc(a.prix)}</span>` : ''}
+      <div class="petit">${esc(a.pourquoi)}${a.lien && /^https?:\/\//.test(a.lien) ? ` · <a href="${esc(a.lien)}" target="_blank" rel="noopener">voir</a>` : ''}</div></div>`).join('')}`
+    : '<p class="petit" style="margin:0">Pas encore de conseil. Votre Claude regardera la répartition de votre cave et vos goûts, puis proposera des achats concrets dans votre budget.</p>';
+  const branche = !!(etatClaudeMemo && etatClaudeMemo.uid === session?.user?.id && etatClaudeMemo.etat);
+  $('#cnsDemander').hidden = !branche;
+  $('#cnsSansClaude').hidden = branche || !etatClaudeMemo;
+  const notes = sommelier.notes || [];
+  $('#cnsNotesBloc').hidden = !notes.length;
+  $('#cnsNotes').innerHTML = notes.map((n, i) => `<li data-note="${i}">${esc(n.texte)}
+    <button type="button" class="link" data-oublier="${i}" aria-label="Oublier">✕</button></li>`).join('');
+}
+
+async function ecrireSommelier(champs) {
+  await jsonPost('/rest/v1/sommelier?on_conflict=user_id', { user_id: moi(), ...champs, modifie: new Date().toISOString() },
+    'resolution=merge-duplicates,return=minimal');
+}
+
+$('#formGouts').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const preferences = {
+    couleurs: [...$('#gCouleurs').querySelectorAll('input:checked')].map((c) => c.value),
+    aime: $('#gAime').value.trim(), aimePas: $('#gAimePas').value.trim(), decouvrir: $('#gDecouvrir').value.trim(),
+    budget: $('#gBudget').value.trim(), usage: $('#gUsage').value, autre: $('#gAutre').value.trim(),
+  };
+  try {
+    await ecrireSommelier({ preferences });
+    sommelier.preferences = preferences;
+    toast('✓ Vos goûts sont enregistrés. Votre Claude les lira à votre prochaine demande.');
+  } catch (err) { toast('Enregistrement impossible : ' + err.message); }
+});
+
+$('#cnsNotes').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-oublier]');
+  if (!b) return;
+  const i = Number(b.dataset.oublier);
+  const n = (sommelier.notes || [])[i];
+  if (!n || !confirm(`Faire oublier à votre Claude :\n« ${n.texte} » ?`)) return;
+  // Relu juste avant : Claude a pu noter autre chose entre-temps
+  await chargerSommelier();
+  const notes = (sommelier.notes || []).filter((x) => !(x.texte === n.texte && x.le === n.le));
+  try { await ecrireSommelier({ notes }); sommelier.notes = notes; afficherSommelier(); }
+  catch (err) { toast('Impossible : ' + err.message); }
+});
+
+$('#cnsDemander').onclick = () => ouvrirDansClaude(`Dans Ma Cave, sois mon sommelier : lis profil_sommelier (mes goûts, ce que tu as retenu de moi, ton dernier conseil et la répartition de ma cave), regarde ma cave avec ma_cave, puis dis-moi quoi acheter pour la compléter ou la rééquilibrer (régions, appellations, couleurs, vins prêts à boire ou de garde), avec des vins concrets dans mon budget, en vérifiant prix et disponibilité sur le web. Enregistre ensuite ton conseil avec enregistrer_conseil.`);
 $('#btnAilleursCave').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
 
 function changerVue(v) {
@@ -3876,6 +4095,8 @@ function changerVue(v) {
   $('#vueCommandes').hidden = v !== 'commandes';
   $('#vueBues').hidden = v !== 'bues';
   if (v === 'bues') afficherBues();
+  $('#vueConseils').hidden = v !== 'conseils';
+  if (v === 'conseils') afficherConseils();
   $('#vueAdmin').hidden = v !== 'admin';
   if (v === 'commandes') chargerCommandes();
   if (v === 'admin') chargerAdmin();

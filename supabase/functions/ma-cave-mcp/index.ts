@@ -12,7 +12,7 @@
 // À déployer sans vérification du JWT (verify_jwt = false) : Claude n'envoie pas de jeton Supabase.
 
 const NOM = "ma-cave";
-const VERSION = "1.5.0";
+const VERSION = "1.6.0";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://macave.pstrauss.org). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
@@ -25,6 +25,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Pour ajouter des vins (facture, liste, photo d'étiquette), utilise ajouter_vins ; un vin déjà présent (même domaine, cuvée, appellation, millésime et format) voit sa quantité augmenter.
 - Photos et listes envoyées depuis l'app (imports) : imports_a_traiter les liste, lire_import montre le contenu (photos de bouteilles, listes, tableaux, PDF, offre d'un caviste). Sur une photo de bouteilles, repère chaque vin et son nombre, et le format en comparant les tailles (magnum = bouteille nettement plus grande). Pour chaque vin, fais aussi une recherche web pour sa fiche (description, cépages, accords, service, apogée, fenêtre boireDe/boireA, prix du marché, sources) ; si la liste est longue, fais au mieux et laisse sans fiche ce que tu n'as pas trouvé. Présente aussi chaque domaine qui ne l'est pas encore dans sa cave (ma_cave indique domaine_presente) : histoire, vignoble, viticulture, style, cuvées phares, dans domaineInfo et domaineSite (une seule fois par domaine suffit). N'ajoute PAS toi-même ces vins (ni ajouter_vins, ni ajouter_vins_commande) : envoie ta lecture avec proposer_vins, puis dis à l'utilisateur d'ouvrir l'app Ma Cave, où il vérifie les quantités et les formats et valide l'ajout.
 - Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé), et enregistrer_domaine_commande présente chaque domaine qui ne l'est pas encore (histoire, vignoble, style, cuvées phares) : tous les participants les voient en touchant le vin dans la commande. Pour une offre de caviste, donne aussi ta note sur 20 et un verdict franc par vin (note, verdict dans proposer_vins) et une synthèse (synthese : en_bref, a_verifier, lien) ; pour une commande déjà créée, enregistre-les avec enregistrer_synthese_commande. Les notes combinent réputation du climat, critiques et rapport qualité-prix : dis que ce n'est pas une dégustation.
+- Conseils d'achat et goûts : au début d'une conversation de conseil (quoi acheter, compléter ou rééquilibrer sa cave, quoi boire selon ses goûts), lis profil_sommelier : ses préférences, ce que tu as déjà retenu de lui, ton dernier conseil et la répartition de sa cave (régions, appellations, couleurs, garde, prix). Appuie-toi sur ces chiffres : dis ce qui manque ou déséquilibre (une région trop dominante, des appellations absentes, trop peu de blancs ou de vins prêts à boire) et propose des achats concrets (domaines, cuvées, appellations, millésimes, fourchette de prix) dans son budget, en vérifiant sur le web prix et disponibilité. Enregistre ensuite ton conseil avec enregistrer_conseil : il le retrouve dans l'onglet « 🎯 Conseils » de l'app. Quand il t'apprend quelque chose de durable sur ses goûts (« je n'aime pas les vins boisés », « budget 40 € max », « je veux plus de Rhône »), note-le avec noter_preference sans attendre qu'il te le demande, et supprime avec oublier_preference ce qui n'est plus vrai.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
 // ---------- Supabase (clé secrète du projet) ----------
@@ -629,7 +630,106 @@ const OUTILS = [
     inputSchema: { type: "object", properties: { depuis: { ...texte, description: "Date de début (AAAA-MM-JJ)" } } },
     annotations: { title: "Bouteilles bues", readOnlyHint: true },
   },
+  {
+    name: "profil_sommelier",
+    description: "À lire au début d'une conversation de conseil : préférences et goûts de l'utilisateur (saisis dans l'app), ce que tu as retenu de lui (notes), ton dernier conseil d'achat, et la répartition de sa cave (régions, appellations, couleurs, garde, prix) pour repérer ce qui manque.",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { title: "Profil du sommelier", readOnlyHint: true },
+  },
+  {
+    name: "noter_preference",
+    description: "Retient un fait durable sur ses goûts ou sa façon d'acheter et de boire (une phrase), pour les prochaines conversations. Il le voit dans l'onglet « 🎯 Conseils ».",
+    inputSchema: {
+      type: "object",
+      properties: { note: { ...texte, description: "Une phrase, ex. « N'aime pas les blancs boisés »" } },
+      required: ["note"],
+    },
+    annotations: { title: "Retenir une préférence", readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "oublier_preference",
+    description: "Supprime une note retenue qui n'est plus vraie (numéro donné par profil_sommelier, à partir de 1).",
+    inputSchema: { type: "object", properties: { numero: { type: "integer", minimum: 1 } }, required: ["numero"] },
+    annotations: { title: "Oublier une préférence", readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "enregistrer_conseil",
+    description: "Enregistre ton conseil d'achat pour compléter ou rééquilibrer sa cave : un résumé et une liste d'achats suggérés. Il remplace le précédent et s'affiche dans l'onglet « 🎯 Conseils » de l'app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resume: { ...texte, description: "Ton analyse en 3 à 6 phrases : déséquilibres, manques, direction proposée" },
+        achats: {
+          type: "array",
+          maxItems: 15,
+          items: {
+            type: "object",
+            properties: {
+              vin: { ...texte, description: "Domaine, cuvée, appellation, millésime conseillé" },
+              pourquoi: { ...texte, description: "Pourquoi ce vin, en une ou deux phrases" },
+              prix: { ...texte, description: "Prix indicatif par bouteille, ex. « 35-45 € »" },
+              lien: { ...texte, description: "Lien vers un caviste ou une source, si utile" },
+            },
+            required: ["vin", "pourquoi"],
+          },
+        },
+      },
+      required: ["resume", "achats"],
+    },
+    annotations: { title: "Enregistrer un conseil d'achat", readOnlyHint: false, destructiveHint: false },
+  },
 ];
+
+// ---------- Sommelier : préférences, notes retenues et dernier conseil (table sommelier, une ligne par compte) ----------
+
+async function lireSommelier(uid: string): Promise<Vin> {
+  const r = await sb(`/rest/v1/sommelier?select=preferences,notes,conseil&user_id=eq.${uid}`);
+  return r?.[0] ?? { preferences: {}, notes: [], conseil: null };
+}
+
+async function ecrireSommelier(uid: string, champs: Vin) {
+  await sb(`/rest/v1/sommelier?on_conflict=user_id`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ user_id: uid, ...champs, modifie: new Date().toISOString() }),
+  });
+}
+
+// Grande région d'après le champ « région » (souvent détaillé : « Bourgogne (Côte de Beaune) ») ;
+// la sous-région entre parenthèses ou après un tiret
+function regionsDe(b: Vin) {
+  const brut = String(b.region || "").trim();
+  const region = brut.split(/\s*[(–—,]\s*|\s+-\s+/)[0].trim() || "Région inconnue";
+  const detail = brut.slice(region.length).replace(/^[\s(–—,-]+|[)\s]+$/g, "").split(/\s*[,(/]\s*/)[0];
+  return { region, sous: detail };
+}
+
+// Répartition de la cave en stock, par nombre de bouteilles et par valeur
+function repartition(cave: Vin[]) {
+  const stock = cave.filter((b) => Number(b.quantite) > 0);
+  const total = stock.reduce((s, b) => s + Number(b.quantite), 0) || 1;
+  const grouper = (cle: (b: Vin) => string, max = 40) => {
+    const m = new Map<string, { bouteilles: number; vins: number; valeur: number }>();
+    for (const b of stock) {
+      const k = cle(b) || "inconnu";
+      const x = m.get(k) ?? { bouteilles: 0, vins: 0, valeur: 0 };
+      x.bouteilles += Number(b.quantite); x.vins += 1; x.valeur += valeurUnitaire(b) * Number(b.quantite);
+      m.set(k, x);
+    }
+    return [...m.entries()].sort((a, b) => b[1].bouteilles - a[1].bouteilles).slice(0, max)
+      .map(([nom, x]) => ({ nom, bouteilles: x.bouteilles, part: Math.round(100 * x.bouteilles / total) + " %", vins: x.vins, valeur_eur: Math.round(x.valeur) }));
+  };
+  const prix = stock.map((b) => valeurUnitaire(b)).filter((v) => v > 0).sort((a, b) => a - b);
+  return {
+    bouteilles: total,
+    par_region: grouper((b) => regionsDe(b).region),
+    par_sous_region: grouper((b) => [regionsDe(b).region, regionsDe(b).sous].filter(Boolean).join(" › ")),
+    par_appellation: grouper((b) => String(b.appellation || "").replace(/\s+(premier cru|1er cru|grand cru)\b.*$/i, "").trim(), 60),
+    par_couleur: grouper((b) => b.couleur || ""),
+    par_statut: grouper((b) => statut(b).split(" (")[0]),
+    prix_unitaire_eur: prix.length ? { bas: Math.round(prix[0]), median: Math.round(prix[Math.floor(prix.length / 2)]), haut: Math.round(prix[prix.length - 1]) } : null,
+  };
+}
 
 // Fiche venant de Claude : types forcés et longueurs bornées (elle peut aller au catalogue partagé)
 const borne = (x: unknown, n: number) => String(x ?? "").trim().slice(0, n);
@@ -1101,6 +1201,46 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       const partage = await publier(uid, cd, { presentation, site, nom: memes[0].data.domaine }, false);
       await cloreDemandes(uid, cd);
       return { ok: true, vins_mis_a_jour: changes.length, deja_presentes: memes.length - changes.length, catalogue: partage };
+    }
+
+    case "profil_sommelier": {
+      const [som, cave] = await Promise.all([lireSommelier(uid), lireCave(uid)]);
+      return {
+        preferences: som.preferences ?? {},
+        notes_retenues: (som.notes ?? []).map((n: Vin, i: number) => ({ numero: i + 1, note: n.texte, le: n.le })),
+        dernier_conseil: som.conseil ?? null,
+        repartition: repartition(cave),
+      };
+    }
+
+    case "noter_preference": {
+      const note = borne(a.note, 300);
+      if (!note) throw new Error("note vide");
+      const som = await lireSommelier(uid);
+      // 60 notes au plus : les plus anciennes partent
+      const notes = [...(som.notes ?? []), { texte: note, le: new Date().toISOString() }].slice(-60);
+      await ecrireSommelier(uid, { notes });
+      return { ok: true, notes: notes.length };
+    }
+
+    case "oublier_preference": {
+      const som = await lireSommelier(uid);
+      const i = Number(a.numero) - 1;
+      const notes = som.notes ?? [];
+      if (!Number.isInteger(i) || i < 0 || i >= notes.length) throw new Error("numéro de note inconnu");
+      const [oubliee] = notes.splice(i, 1);
+      await ecrireSommelier(uid, { notes });
+      return { ok: true, oubliee: oubliee?.texte };
+    }
+
+    case "enregistrer_conseil": {
+      const resume = borne(a.resume, 2500);
+      const achats = (Array.isArray(a.achats) ? a.achats : []).slice(0, 15)
+        .map((x: Vin) => ({ vin: borne(x?.vin, 200), pourquoi: borne(x?.pourquoi, 600), prix: borne(x?.prix, 60), lien: estUrl(x?.lien) ? borne(x.lien, 400) : "" }))
+        .filter((x: Vin) => x.vin);
+      if (!resume || !achats.length) throw new Error("il faut un résumé et au moins un achat");
+      await ecrireSommelier(uid, { conseil: { resume, achats, le: new Date().toISOString() } });
+      return { ok: true, achats: achats.length, message: "Conseil visible dans l'onglet « 🎯 Conseils » de l'app" };
     }
 
     case "degustees": {
