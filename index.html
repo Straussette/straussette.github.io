@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-22.2">
+<meta name="app-version" content="2026-11-22.3">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -3472,6 +3472,15 @@ async function validerCompte() {
       const r = await sbFetch('/auth/v1/signup?redirect_to=' + encodeURIComponent(adresseApp()), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, data: { pseudo } }),
       }, false);
+      // Adresse déjà inscrite : Supabase répond sans erreur mais sans identité, et n'envoie aucun e-mail
+      const u = r?.user || r;
+      if (u && !r?.access_token && Array.isArray(u.identities) && u.identities.length === 0) {
+        $('#c-mdp').value = ''; $('#c-mdp2').value = '';
+        modeCompte = 'connexion';
+        afficherCompte();
+        compteStatut('Un compte existe déjà avec cette adresse : connectez-vous avec votre mot de passe, ou utilisez « Mot de passe oublié ? » pour en choisir un nouveau.', true);
+        return;
+      }
       if (!r || !r.access_token) {
         $('#c-mdp').value = ''; $('#c-mdp2').value = '';
         modeCompte = 'connexion';
