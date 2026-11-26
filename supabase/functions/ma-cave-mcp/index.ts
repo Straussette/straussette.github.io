@@ -12,7 +12,7 @@
 // À déployer sans vérification du JWT (verify_jwt = false) : Claude n'envoie pas de jeton Supabase.
 
 const NOM = "ma-cave";
-const VERSION = "1.7.0";
+const VERSION = "1.8.1";
 const VERSIONS_PROTOCOLE = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès à sa cave « Ma Cave » (https://macave.pstrauss.org). Tu parles en français et tu tutoies, sauf s'il écrit dans une autre langue.
@@ -27,6 +27,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé), et enregistrer_domaine_commande présente chaque domaine qui ne l'est pas encore (histoire, vignoble, style, cuvées phares) : tous les participants les voient en touchant le vin dans la commande. Pour une offre de caviste, donne aussi ta note sur 20 et un verdict franc par vin (note, verdict dans proposer_vins) et une synthèse (synthese : en_bref, a_verifier, lien) ; pour une commande déjà créée, enregistre-les avec enregistrer_synthese_commande. Les notes combinent réputation du climat, critiques et rapport qualité-prix : dis que ce n'est pas une dégustation.
 - Conseils d'achat et goûts : au début d'une conversation de conseil (quoi acheter, compléter ou rééquilibrer sa cave, quoi boire selon ses goûts), lis profil_sommelier : ses préférences, ce que tu as déjà retenu de lui, ton dernier conseil et la répartition de sa cave (régions, appellations, couleurs, garde, prix). Appuie-toi sur ces chiffres : dis ce qui manque ou déséquilibre (une région trop dominante, des appellations absentes, trop peu de blancs ou de vins prêts à boire) et propose des achats concrets (domaines, cuvées, appellations, millésimes, fourchette de prix) dans son budget, en vérifiant sur le web prix et disponibilité. Enregistre ensuite ton conseil avec enregistrer_conseil : il le retrouve dans l'onglet « 🎯 Conseils » de l'app. Quand il t'apprend quelque chose de durable sur ses goûts (« je n'aime pas les vins boisés », « budget 40 € max », « je veux plus de Rhône »), note-le avec noter_preference sans attendre qu'il te le demande, et supprime avec oublier_preference ce qui n'est plus vrai.
 - Conseil personnel sur une commande groupée (« qu'est-ce que je prends ? ») : lis profil_sommelier (goûts, budget, répartition de sa cave) et vins_commande (prix proposé, prix du marché, appellation, ce qu'il a déjà en cave du même village). Conseille-lui quelques vins et combien en prendre, en expliquant pour chacun : bon prix par rapport au marché, complète un manque de sa cave (appellation, région, couleur, vins prêts à boire), colle à ses goûts et à son budget. Dis aussi franchement ce qu'il peut laisser (déjà bien fourni, prix élevé). Enregistre-le avec enregistrer_conseil_commande : il le voit dans la commande, et lui seul.
+- Noter les vins de sa cave (« note mes vins », pépites, valeurs sûres) : pour chaque vin sans note_sur_20 dans ma_cave, donne une note sur 20 et un verdict franc d'une phrase. La note combine la réputation du domaine et du climat, les critiques publiées sur ce millésime (cherche sur le web) et le rapport qualité-prix au prix du marché. Dis que ce n'est pas une dégustation. Enregistre par lots avec enregistrer_avis. Ne note pas un vin sur lequel tu ne trouves rien de solide : laisse-le sans note et dis-le.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
 // ---------- Supabase (clé secrète du projet) ----------
@@ -135,8 +136,20 @@ function valeurUnitaire(b: Vin): number {
   if (marche) return marche * facteurFormat(b.format);
   return Number(b.prix) || 0;
 }
+// Blanc sec très âgé (25 ans et plus) : probablement passé, quoi que dise la fiche (copié d'index.html).
+// Liquoreux, effervescents, vins jaunes et vins de paille, faits pour durer, ne sont pas concernés.
+function declinProbable(b: Vin): number {
+  const m = Number(b.millesime);
+  const an = new Date().getFullYear();
+  if (!(m > 1800) || an - m < 25 || norm(b.couleur) !== "blanc") return 0;
+  if (/\b(jaune|chateau chalon|paille|liquoreux|moelleux|sauternes|barsac|vendanges tardives|selection de grains nobles|monbazillac|layon|quarts de chaume|bonnezeaux|loupiac|cadillac|cerons|jurancon|tokaj)\b/.test(norm([b.appellation, b.cuvee, b.classement].join(" ")))) return 0;
+  return an - m;
+}
+
 function statut(b: Vin): string {
   const an = new Date().getFullYear();
+  const age = declinProbable(b);
+  if (age) return `à boire d'urgence (blanc de ${age} ans : probablement passé ou à fort risque, à ouvrir sans attendre)`;
   const g = b.garde;
   if (g && g.ouverture && g.avant) {
     if (an < g.ouverture) return `trop tôt (dès ${g.ouverture}, apogée ${g.apogeeDe}–${g.apogeeA})`;
@@ -283,6 +296,7 @@ function resume(b: Vin) {
     emplacement: b.emplacement || undefined,
     fiche: !!b.description,
     domaine_presente: !!b.domaineInfo,
+    note_sur_20: b.avis && b.avis.note != null && b.avis.note !== "" && Number.isFinite(Number(b.avis.note)) ? Number(b.avis.note) : undefined,
     hors_cave: b.horsCave ? "goûté ailleurs (chez des amis, au restaurant), jamais en cave" : undefined,
   };
 }
@@ -630,6 +644,31 @@ const OUTILS = [
     description: "Journal des bouteilles bues (dates d'ouverture), le plus récent d'abord, avec les notes de dégustation.",
     inputSchema: { type: "object", properties: { depuis: { ...texte, description: "Date de début (AAAA-MM-JJ)" } } },
     annotations: { title: "Bouteilles bues", readOnlyHint: true },
+  },
+  {
+    name: "enregistrer_avis",
+    description: "Note des vins de sa cave sur 20, avec un verdict d'une phrase (réputation, critiques du millésime, rapport qualité-prix : ce n'est pas une dégustation). Jusqu'à 100 vins par appel (id donnés par ma_cave). L'app s'en sert pour repérer pépites, valeurs sûres et moins bonnes affaires.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        avis: {
+          type: "array",
+          minItems: 1,
+          maxItems: 100,
+          items: {
+            type: "object",
+            properties: {
+              id: { ...texte, description: "id du vin (ma_cave)" },
+              note: { type: "number", minimum: 0, maximum: 20, description: "Note sur 20, au demi-point près" },
+              verdict: { ...texte, description: "Une phrase franche : ce qui fait la note, pour quel usage" },
+            },
+            required: ["id", "note", "verdict"],
+          },
+        },
+      },
+      required: ["avis"],
+    },
+    annotations: { title: "Noter des vins de la cave", readOnlyHint: false, destructiveHint: false },
   },
   {
     name: "enregistrer_conseil_commande",
@@ -1238,6 +1277,24 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       const partage = await publier(uid, cd, { presentation, site, nom: memes[0].data.domaine }, false);
       await cloreDemandes(uid, cd);
       return { ok: true, vins_mis_a_jour: changes.length, deja_presentes: memes.length - changes.length, catalogue: partage };
+    }
+
+    case "enregistrer_avis": {
+      const liste = (Array.isArray(a.avis) ? a.avis : []).slice(0, 100);
+      if (!liste.length) throw new Error("aucun avis");
+      const cave = await lireCave(uid);
+      const parId = new Map(cave.map((b) => [String(b.id), b]));
+      const modifies: Vin[] = [], inconnus: string[] = [];
+      for (const x of liste) {
+        const b = parId.get(String(x?.id));
+        const note = Math.round(Number(x?.note) * 2) / 2;
+        if (!b) { inconnus.push(String(x?.id).slice(0, 40)); continue; }
+        if (!Number.isFinite(note) || note < 0 || note > 20) throw new Error(`note invalide pour ${nomVin(b)}`);
+        b.avis = { note, verdict: borne(x?.verdict, 400), le: new Date().toISOString(), par: "claude" };
+        modifies.push(b);
+      }
+      if (modifies.length) await ecrireVins(uid, modifies);
+      return { ok: true, notes: modifies.length, ...(inconnus.length ? { ids_inconnus: inconnus } : {}) };
     }
 
     case "enregistrer_conseil_commande": {

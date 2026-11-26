@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-26.1">
+<meta name="app-version" content="2026-11-26.2">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -187,6 +187,9 @@
   .legende i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
   .note-pastille { display:inline-block; min-width:3.2em; text-align:center; font-weight:700; border-radius:8px; padding:2px 6px;
     background:color-mix(in srgb, var(--accent) 12%, var(--surface)); color:var(--text); margin-right:8px; }
+  .note-carte { font-weight:600; color:var(--text); }
+  .avis-vin { display:flex; gap:8px; align-items:baseline; margin:4px 0 8px; font-size:.92rem; }
+  .ligne-stat .tag { font-size:.75rem; color:var(--muted); }
   .ligne-stat { display:flex; align-items:baseline; gap:6px; padding:6px 0; border-top:1px solid var(--border); font-size:.92rem; }
   .ligne-stat:first-child { border-top:0; }
   .ligne-stat .nom { flex:1; min-width:0; }
@@ -488,6 +491,11 @@
     <h3>⏳ Bouteilles à leur apogée, année par année</h3>
     <p class="petit" style="margin:0 0 8px">Nombre de bouteilles dont l'apogée tombe chaque année (à défaut, leur fenêtre de dégustation). Touchez une barre pour voir les vins.</p>
     <div id="stApogee"></div>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>🔎 Pépites, valeurs sûres et moins bonnes affaires</h3>
+    <div id="stPepites"></div>
   </div>
 
   <div class="carte-conseil">
@@ -1050,9 +1058,34 @@ function valeurUnitaire(b) {
   return Number(b.prix) || 0;
 }
 
+// Note sur 20 du vin (avis de Claude : réputation, critiques, rapport qualité-prix ; même format que data.avis des commandes)
+function noteVin(b) {
+  const n = Number(b?.avis?.note);
+  return b?.avis && b.avis.note !== '' && b.avis.note != null && isFinite(n) && n >= 0 && n <= 20 ? n : null;
+}
+const fmtNote = (n) => String(n).replace('.', ',');
+// Prix du marché à l'unité (fiche), sans repli sur le prix payé : pour juger un achat
+function marcheUnitaire(b) {
+  const min = Number(b.prixMin) || 0, max = Number(b.prixMax) || 0;
+  const m = min && max ? (min + max) / 2 : (min || max);
+  return m ? m * facteurFormat(b.format) : 0;
+}
+
+// Blanc sec très âgé (25 ans et plus) : probablement passé, quoi que dise la fiche (copié dans le connecteur).
+// Liquoreux, effervescents, vins jaunes et vins de paille, faits pour durer, ne sont pas concernés.
+function declinProbable(b) {
+  const m = Number(b.millesime);
+  const an = new Date().getFullYear();
+  if (!(m > 1800) || an - m < 25 || norm(b.couleur || '') !== 'blanc') return 0;
+  if (/\b(jaune|chateau chalon|paille|liquoreux|moelleux|sauternes|barsac|vendanges tardives|selection de grains nobles|monbazillac|layon|quarts de chaume|bonnezeaux|loupiac|cadillac|cerons|jurancon|tokaj)\b/.test(norm([b.appellation, b.cuvee, b.classement].join(' ')))) return 0;
+  return an - m;
+}
+
 // Statut de la fenêtre de dégustation
 function statut(b) {
   const an = new Date().getFullYear();
+  const age = declinProbable(b);
+  if (age) return { cls: 'passe', txt: `Probablement passé · blanc de ${age} ans, à ouvrir sans attendre` };
   const g = b.garde;
   if (g && g.ouverture && g.avant) {
     // Fenêtre affinée : ouverture → apogée → à boire avant
@@ -1127,7 +1160,7 @@ function carte(b, niveau = 0) {
           <div class="sub"><span class="dot c-${c}"></span>${esc(sousTitre)}</div>
           ${st ? `<div class="badge ${st.cls}">${st.txt}</div>` : ''}
           ${b.emplacement ? `<div class="loc">📍 ${esc(b.emplacement)}</div>` : ''}
-          ${valeurUnitaire(b) ? `<div class="valeur">≈ ${fmtEuro(valeurUnitaire(b))} / ${b.format ? esc(b.format.toLowerCase()) : 'bouteille'}</div>` : ''}
+          ${valeurUnitaire(b) || noteVin(b) != null ? `<div class="valeur">${noteVin(b) != null ? `<span class="note-carte" title="${esc(b.avis.verdict || '')}">★ ${fmtNote(noteVin(b))}/20</span>${valeurUnitaire(b) ? ' · ' : ''}` : ''}${valeurUnitaire(b) ? `≈ ${fmtEuro(valeurUnitaire(b))} / ${b.format ? esc(b.format.toLowerCase()) : 'bouteille'}` : ''}</div>` : ''}
         </div>
       </button>
       <div class="qty">
@@ -2450,6 +2483,8 @@ function afficherVue(message = '', erreur = false, enCours = false) {
       <input id="af-qte" type="number" inputmode="numeric" min="1" value="1" style="width:70px" aria-label="Nombre">
       <button type="button" class="btn primary petit-btn" data-vue="autreFormatOk">Ajouter</button>
     </div>
+    ${noteVin(b) != null ? `<div class="avis-vin"><span class="note-pastille">${fmtNote(noteVin(b))}/20</span><span>${esc(b.avis.verdict || '')}
+      <span class="petit">· avis de votre Claude (réputation, critiques, prix), pas une dégustation</span></span></div>` : ''}
     ${b.quantite === 0 && b.horsCave ? `<div class="petit">🥂 Goûté ailleurs, pas dans votre cave. Vous en voulez ? « + » l'ajoute à votre cave.</div>`
       : b.quantite === 0 ? `<div class="petit">📖 Plus en cave — ce vin reste en mémoire.${(b.ouvertures || []).length ? ` Dernière bouteille ouverte le ${new Date(b.ouvertures.at(-1)).toLocaleDateString('fr-FR')}.` : ''}</div>`
       : (b.emplacement ? `<div class="petit">📍 ${esc(b.emplacement)}</div>` : '')}
@@ -4042,6 +4077,7 @@ const niveauStat = (b) => { const n = niveauCru(b); return n === 'pc' ? 'pc' : (
 
 // Années d'apogée : garde affinée, sinon « apogée vers 2030-2037 » de la fiche, sinon la fenêtre de dégustation
 function anneesApogee(b) {
+  if (declinProbable(b)) return null;
   const g = b.garde;
   if (g && g.apogeeDe && g.apogeeA) return [Number(g.apogeeDe), Number(g.apogeeA)];
   const m = /(\d{4})\s*[-–à]+\s*(\d{4})/.exec(String(b.apogee || ''));
@@ -4049,6 +4085,47 @@ function anneesApogee(b) {
   const de = Number(b.boireDe) || 0, a = Number(b.boireA) || 0;
   return de && a ? [de, a] : null;
 }
+
+function pepitesHTML(stock) {
+  const notes = stock.filter((b) => noteVin(b) != null);
+  const sansNote = stock.filter((b) => noteVin(b) == null).length;
+  const prixMed = (() => { const p = stock.map(valeurUnitaire).filter((x) => x > 0).sort((a, b) => a - b); return p.length ? p[Math.floor(p.length / 2)] : 0; })();
+  const ligne = (b, droite) => `<div class="ligne-stat"><span class="note-pastille">${fmtNote(noteVin(b))}</span>
+    <span class="nom">${esc(nomVin(b))}<br><span class="tag">${esc(b.avis.verdict || '')}</span></span><span class="val">${droite}</span></div>`;
+  const prixTxt = (b) => valeurUnitaire(b) ? fmtEuro(valeurUnitaire(b)) : '';
+  const bloc = (titre, aide, liste, droite = prixTxt) => liste.length
+    ? `<div class="rep-titre">${titre}</div><p class="petit" style="margin:0 0 4px">${aide}</p>${liste.map((b) => ligne(b, droite(b))).join('')}` : '';
+  // Pépites : très bien notées pour un prix au plus médian ; valeurs sûres : les mieux notées ;
+  // moins bonnes affaires : note modeste alors que le prix est au-dessus de la médiane
+  const pepites = notes.filter((b) => noteVin(b) >= 16 && valeurUnitaire(b) > 0 && valeurUnitaire(b) <= prixMed)
+    .sort((a, b) => noteVin(b) - noteVin(a) || valeurUnitaire(a) - valeurUnitaire(b)).slice(0, 6);
+  const sures = notes.filter((b) => noteVin(b) >= 17 && !pepites.includes(b)).sort((a, b) => noteVin(b) - noteVin(a)).slice(0, 6);
+  const moins = notes.filter((b) => noteVin(b) <= 15 && valeurUnitaire(b) > prixMed)
+    .sort((a, b) => (noteVin(a) - noteVin(b)) || valeurUnitaire(b) - valeurUnitaire(a)).slice(0, 6);
+  // Achats : prix payé contre prix du marché de la fiche
+  const achats = stock.filter((b) => Number(b.prix) > 0 && marcheUnitaire(b) > 0)
+    .map((b) => ({ b, ecart: Math.round((Number(b.prix) - marcheUnitaire(b)) / marcheUnitaire(b) * 100) }));
+  const ligneAchat = ({ b, ecart }) => `<div class="ligne-stat"><span class="nom">${esc(nomVin(b))}<br>
+    <span class="tag">payé ${fmtEuro(Number(b.prix))} · marché ${fmtEuro(marcheUnitaire(b))}</span></span><span class="val">${ecart > 0 ? '+' : ''}${ecart} %</span></div>`;
+  const bons = achats.filter((x) => x.ecart <= -20).sort((a, b) => a.ecart - b.ecart).slice(0, 5);
+  const chers = achats.filter((x) => x.ecart >= 15).sort((a, b) => b.ecart - a.ecart).slice(0, 5);
+  const branche = !!(etatClaudeMemo && etatClaudeMemo.uid === session?.user?.id && etatClaudeMemo.etat);
+  // Rien tant que l'état de Claude n'est pas connu (lu à l'ouverture de l'onglet)
+  const appel = sansNote && etatClaudeMemo && etatClaudeMemo.uid === session?.user?.id
+    ? (branche ? `<div class="actions" style="margin:8px 0 0"><button type="button" class="btn ${notes.length ? 'secondary' : 'primary'} petit-btn" id="stNoter">🤖 Faire noter mes vins par mon Claude (${sansNote} sans note)</button></div>`
+      : `<p class="petit" style="margin:8px 0 0">${sansNote} vin${sansNote > 1 ? 's' : ''} sans note. Votre Claude peut les noter sur 20 d'après leur réputation et les critiques : <button type="button" class="link" data-claude="brancher">🤖 brancher mon Claude</button>.</p>`)
+    : '';
+  const corps = bloc('💎 Pépites', `Notées 16 et plus, pour ${prixMed ? fmtEuro(prixMed) : 'un prix'} ou moins (prix médian de votre cave).`, pepites)
+    + bloc('🏆 Valeurs sûres', 'Les mieux notées de votre cave.', sures)
+    + bloc('🤔 Moins bonnes affaires', 'Notes modestes pour un prix au-dessus de la médiane.', moins)
+    + (bons.length ? `<div class="rep-titre">👍 Mes meilleurs achats</div><p class="petit" style="margin:0 0 4px">Payés bien en dessous du prix du marché.</p>${bons.map(ligneAchat).join('')}` : '')
+    + (chers.length ? `<div class="rep-titre">💸 Payés plus cher que le marché</div>${chers.map(ligneAchat).join('')}` : '');
+  return (corps || `<p class="petit" style="margin:0">${notes.length ? 'Pas encore assez de vins notés ou de prix d\'achat pour faire ressortir des pépites.' : 'Aucun vin noté pour l\'instant. Avec une note sur 20 par vin, vos pépites et vos moins bonnes affaires apparaissent ici.'}</p>`)
+    + (notes.length ? `<p class="petit" style="margin:8px 0 0">Notes de votre Claude d'après la réputation, les critiques et le prix : ce ne sont pas des dégustations.</p>` : '')
+    + appel;
+}
+
+const messageNoterCave = () => `Dans Ma Cave, note les vins de ma cave qui n'ont pas encore de note (note_sur_20 absente dans ma_cave) : pour chacun, une note sur 20 et un verdict franc d'une phrase, d'après la réputation du domaine et du climat, les critiques publiées sur ce millésime (cherche sur le web) et le rapport qualité-prix au prix du marché. Enregistre par lots avec enregistrer_avis. Laisse sans note ce sur quoi tu ne trouves rien de solide. Ensuite, dis-moi mes pépites, mes valeurs sûres et mes moins bonnes affaires.`;
 
 // Diagramme en barres verticales ; donnees = [{label, n, tip, fort}] ; chaque barre porte une info-bulle
 function barresVerticales(donnees, { hauteur = 150, pasLabel = 1 } = {}) {
@@ -4094,7 +4171,7 @@ function afficherStats() {
     tuile(new Set(stock.map((b) => cleDomaine(b.domaine || ''))).size, 'domaines'),
     tuile(millesimes.length ? Math.min(...millesimes) : '—', 'plus vieux millésime'),
   ].join('');
-  if (!total) { for (const id of ['stCrus', 'stApogee', 'stNotes', 'stTop', 'stRepartitions', 'stMillesimes', 'stBu']) $('#' + id).innerHTML = ''; return; }
+  if (!total) { for (const id of ['stCrus', 'stApogee', 'stPepites', 'stNotes', 'stTop', 'stRepartitions', 'stMillesimes', 'stBu']) $('#' + id).innerHTML = ''; return; }
 
   // Grands crus / premiers crus
   const niv = { gc: { n: 0, v: 0, vins: [] }, pc: { n: 0, v: 0, vins: [] }, autre: { n: 0, v: 0, vins: [] } };
@@ -4110,8 +4187,9 @@ function afficherStats() {
   // Apogée par an : de l'an dernier à 20 ans
   const annees = Array.from({ length: 22 }, (_, i) => an - 1 + i);
   const parAn = new Map(annees.map((a) => [a, { n: 0, vins: [] }]));
-  let sansFenetre = 0;
+  let sansFenetre = 0, passes = 0;
   for (const b of stock) {
+    if (declinProbable(b)) { passes += b.quantite; continue; }
     const f = anneesApogee(b);
     if (!f) { sansFenetre += b.quantite; continue; }
     for (const a of annees) if (a >= f[0] && a <= f[1]) { const x = parAn.get(a); x.n += b.quantite; x.vins.push(b); }
@@ -4120,7 +4198,10 @@ function afficherStats() {
     const x = parAn.get(a);
     const top = x.vins.sort((p, q) => (valeurUnitaire(q) || 0) - (valeurUnitaire(p) || 0)).slice(0, 4).map((b) => '· ' + nomVin(b)).join('\n');
     return { label: String(a).slice(2), n: x.n, fort: a === an, tip: `${a} : ${x.n} bouteille${x.n > 1 ? 's' : ''} à l'apogée${top ? '\n' + top + (x.vins.length > 4 ? '\n…' : '') : ''}` };
-  }), { hauteur: 160, pasLabel: 2 }) + `<p class="petit" style="margin:6px 0 0">Cette année (${an}) : <strong>${parAn.get(an).n}</strong> bouteilles à leur apogée.${sansFenetre ? ` ${sansFenetre} bouteille${sansFenetre > 1 ? 's' : ''} sans fenêtre connue.` : ''}</p>`;
+  }), { hauteur: 160, pasLabel: 2 }) + `<p class="petit" style="margin:6px 0 0">Cette année (${an}) : <strong>${parAn.get(an).n}</strong> bouteilles à leur apogée.${passes ? ` ⚠️ ${passes} blanc${passes > 1 ? 's' : ''} de 25 ans et plus, probablement passé${passes > 1 ? 's' : ''} : à ouvrir sans attendre.` : ''}${sansFenetre ? ` ${sansFenetre} bouteille${sansFenetre > 1 ? 's' : ''} sans fenêtre connue.` : ''}</p>`;
+
+  // Pépites, valeurs sûres, moins bonnes affaires (notes de Claude) et achats (prix payé contre prix du marché)
+  $('#stPepites').innerHTML = pepitesHTML(stock);
 
   // Meilleures notes (dégustations notées sur 20), un vin = sa meilleure note
   const notes = bottles.map((b) => {
@@ -4343,6 +4424,7 @@ $('#cnsNotes').addEventListener('click', async (e) => {
 });
 
 $('#cnsVersStats').onclick = () => changerVue('stats');
+$('#vueStats').addEventListener('click', (e) => { if (e.target.closest('#stNoter')) ouvrirDansClaude(messageNoterCave()); });
 $('#cnsDemander').onclick = () => ouvrirDansClaude(`Dans Ma Cave, sois mon sommelier : lis profil_sommelier (mes goûts, ce que tu as retenu de moi, ton dernier conseil et la répartition de ma cave), regarde ma cave avec ma_cave, puis dis-moi quoi acheter pour la compléter ou la rééquilibrer (régions, appellations, couleurs, vins prêts à boire ou de garde), avec des vins concrets dans mon budget, en vérifiant prix et disponibilité sur le web. Enregistre ensuite ton conseil avec enregistrer_conseil.`);
 $('#btnAilleursCave').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
 
@@ -4355,7 +4437,13 @@ function changerVue(v) {
   $('#vueBues').hidden = v !== 'bues';
   if (v === 'bues') afficherBues();
   $('#vueStats').hidden = v !== 'stats';
-  if (v === 'stats') afficherStats();
+  if (v === 'stats') {
+    afficherStats();
+    lireEtatClaude().then(() => {
+      const stock = bottles.filter((b) => b.quantite > 0);
+      if (stock.length && !$('#vueStats').hidden) $('#stPepites').innerHTML = pepitesHTML(stock);
+    }).catch(() => {});
+  }
   $('#vueConseils').hidden = v !== 'conseils';
   if (v === 'conseils') afficherConseils();
   $('#vueAdmin').hidden = v !== 'admin';
