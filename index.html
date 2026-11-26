@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-22.3">
+<meta name="app-version" content="2026-11-26.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -163,6 +163,36 @@
     border-bottom:2px solid transparent; cursor:pointer; white-space:nowrap;
   }
   .onglets button[aria-selected="true"] { color:var(--accent); border-bottom-color:var(--accent); }
+  /* Onglet Stats */
+  .tuiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:0 0 14px; }
+  .tuile { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:12px 14px; }
+  .tuile .chiffre { font-family:Georgia, "Times New Roman", serif; font-size:1.6rem; font-weight:600; line-height:1.1; }
+  .tuile .libelle { font-size:.8rem; color:var(--muted); margin-top:2px; }
+  .graphe { width:100%; height:auto; display:block; overflow:visible; }
+  .graphe text { fill:var(--muted); font-size:11px; font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .graphe text.fort { fill:var(--text); font-weight:600; }
+  .graphe .grille { stroke:var(--border); stroke-width:1; }
+  .graphe .barre { fill:var(--accent); }
+  .graphe .barre.douce { fill:color-mix(in srgb, var(--accent) 55%, var(--surface)); }
+  .graphe [data-tip] { cursor:pointer; }
+  .graphe [data-tip]:hover .barre, .graphe [data-tip]:focus .barre { opacity:.8; }
+  .graphe .cible { fill:transparent; }
+  .graphe [data-tip]:focus { outline:none; }
+  .graphe [data-tip]:focus-visible .cible { stroke:var(--text); stroke-width:1.5; }
+  .empile { display:flex; height:14px; border-radius:7px; overflow:hidden; gap:2px; margin:6px 0 10px; }
+  .empile span { display:block; height:100%; }
+  .niv-gc { background:var(--accent); } .niv-pc { background:color-mix(in srgb, var(--accent) 55%, var(--surface)); }
+  .niv-autre { background:color-mix(in srgb, var(--accent) 18%, var(--surface)); }
+  .legende { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:.85rem; margin:0 0 6px; }
+  .legende i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  .note-pastille { display:inline-block; min-width:3.2em; text-align:center; font-weight:700; border-radius:8px; padding:2px 6px;
+    background:color-mix(in srgb, var(--accent) 12%, var(--surface)); color:var(--text); margin-right:8px; }
+  .ligne-stat { display:flex; align-items:baseline; gap:6px; padding:6px 0; border-top:1px solid var(--border); font-size:.92rem; }
+  .ligne-stat:first-child { border-top:0; }
+  .ligne-stat .nom { flex:1; min-width:0; }
+  .ligne-stat .val { color:var(--muted); white-space:nowrap; }
+  .tip-stats { position:fixed; z-index:50; pointer-events:none; max-width:260px; background:var(--text); color:var(--bg);
+    font-size:.82rem; line-height:1.35; padding:8px 10px; border-radius:8px; box-shadow:var(--shadow); white-space:pre-line; }
   /* Onglet Conseils (sommelier) */
   .carte-conseil { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin:0 0 14px; }
   .carte-conseil h3 { margin:0 0 10px; font-size:1.05rem; }
@@ -359,6 +389,7 @@
 
 <nav class="onglets" id="onglets" hidden>
   <button data-vue="cave" aria-selected="true">🍷 Ma cave</button>
+  <button data-vue="stats" aria-selected="false">📊 Stats</button>
   <button data-vue="bues" aria-selected="false">🍾 Dégustées</button>
   <button data-vue="commandes" aria-selected="false">📦 Commandes</button>
   <button data-vue="conseils" aria-selected="false">🎯 Conseils</button>
@@ -444,6 +475,48 @@
   </div>
 </dialog>
 
+<section class="wrap" id="vueStats" hidden style="padding:16px">
+  <div class="vue-titre"><h2>Ma cave en chiffres</h2></div>
+  <div class="tuiles" id="stTuiles"></div>
+
+  <div class="carte-conseil">
+    <h3>👑 Grands crus et premiers crus</h3>
+    <div id="stCrus"></div>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>⏳ Bouteilles à leur apogée, année par année</h3>
+    <p class="petit" style="margin:0 0 8px">Nombre de bouteilles dont l'apogée tombe chaque année (à défaut, leur fenêtre de dégustation). Touchez une barre pour voir les vins.</p>
+    <div id="stApogee"></div>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>⭐ Mes meilleures notes</h3>
+    <div id="stNotes"></div>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>💎 Les plus belles bouteilles</h3>
+    <div id="stTop"></div>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>🍇 Répartitions</h3>
+    <div id="stRepartitions"></div>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>📅 Millésimes</h3>
+    <div id="stMillesimes"></div>
+  </div>
+
+  <div class="carte-conseil">
+    <h3>🍾 Ce que j'ai bu, mois par mois</h3>
+    <div id="stBu"></div>
+  </div>
+  <div class="tip-stats" id="tipStats" role="tooltip" hidden></div>
+</section>
+
 <section class="wrap" id="vueConseils" hidden style="padding:16px">
   <div class="vue-titre"><h2>Mon sommelier</h2></div>
   <p class="petit" style="margin-top:0">Ce que dit votre cave, vos goûts, et les conseils d'achat de votre Claude pour la compléter.</p>
@@ -451,6 +524,7 @@
   <div class="carte-conseil">
     <h3>🍇 Ma cave en un coup d'œil</h3>
     <div id="cnsRepartition"></div>
+    <p class="petit" style="margin:8px 0 0"><button type="button" class="link" id="cnsVersStats">📊 Toutes les stats de ma cave</button></p>
     <div id="cnsPistes"></div>
   </div>
 
@@ -1149,6 +1223,7 @@ function afficher() {
 
   afficherChips();
   if ($('#vueBues') && !$('#vueBues').hidden) afficherBues();
+  if ($('#vueStats') && !$('#vueStats').hidden) afficherStats();
 }
 
 /* ---------- Tri intelligent ---------- */
@@ -3961,6 +4036,175 @@ $('#listeBues').addEventListener('click', async (e) => {
 
 $('#btnAilleurs').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
 
+/* ---------- Stats de la cave ---------- */
+// Tout est calculé sur l'appareil à partir de bottles ; graphiques en SVG simple, une seule teinte (l'accent)
+const niveauStat = (b) => { const n = niveauCru(b); return n === 'pc' ? 'pc' : (n === 'gc' || grandCruParAppellation(b)) ? 'gc' : 'autre'; };
+
+// Années d'apogée : garde affinée, sinon « apogée vers 2030-2037 » de la fiche, sinon la fenêtre de dégustation
+function anneesApogee(b) {
+  const g = b.garde;
+  if (g && g.apogeeDe && g.apogeeA) return [Number(g.apogeeDe), Number(g.apogeeA)];
+  const m = /(\d{4})\s*[-–à]+\s*(\d{4})/.exec(String(b.apogee || ''));
+  if (m) return [Number(m[1]), Number(m[2])];
+  const de = Number(b.boireDe) || 0, a = Number(b.boireA) || 0;
+  return de && a ? [de, a] : null;
+}
+
+// Diagramme en barres verticales ; donnees = [{label, n, tip, fort}] ; chaque barre porte une info-bulle
+function barresVerticales(donnees, { hauteur = 150, pasLabel = 1 } = {}) {
+  if (!donnees.length) return '';
+  const max = Math.max(1, ...donnees.map((d) => d.n));
+  const l = 320, h = hauteur, bas = h - 18, haut = 12;
+  const pas = l / donnees.length, larg = Math.max(2, Math.min(28, pas - 2));
+  // Une barre mise en avant (l'année en cours) : les autres sont adoucies ; sinon toutes pleines
+  const iFort = donnees.findIndex((d) => d.fort);
+  const y = (v) => bas - (bas - haut) * v / max;
+  const grille = [0.5, 1].map((f) => `<line class="grille" x1="0" x2="${l}" y1="${y(max * f)}" y2="${y(max * f)}"/><text x="${l}" y="${y(max * f) - 3}" text-anchor="end">${Math.round(max * f)}</text>`).join('');
+  const barres = donnees.map((d, i) => {
+    const x = i * pas + (pas - larg) / 2, yy = y(d.n), hb = Math.max(0, bas - yy);
+    // Bout arrondi en haut, pied droit sur la ligne de base
+    const r = Math.min(4, larg / 2, hb);
+    const chemin = hb ? `M${x},${bas} V${yy + r} Q${x},${yy} ${x + r},${yy} H${x + larg - r} Q${x + larg},${yy} ${x + larg},${yy + r} V${bas} Z` : '';
+    return `<g data-tip="${esc(d.tip)}" tabindex="0" role="img" aria-label="${esc(d.tip)}">
+      <rect class="cible" x="${i * pas}" y="${haut}" width="${pas}" height="${bas - haut + 18}"/>
+      ${chemin ? `<path class="barre${iFort < 0 || d.fort ? '' : ' douce'}" d="${chemin}"/>` : ''}
+      ${d.fort || (i % pasLabel === 0 && (iFort < 0 || Math.abs(i - iFort) >= pasLabel)) ? `<text x="${x + larg / 2}" y="${h - 4}" text-anchor="middle"${d.fort ? ' class="fort"' : ''}>${esc(d.label)}</text>` : ''}
+    </g>`;
+  }).join('');
+  return `<svg class="graphe" viewBox="0 0 ${l} ${h}" preserveAspectRatio="xMidYMid meet">${grille}<line class="grille" x1="0" x2="${l}" y1="${bas}" y2="${bas}"/>${barres}</svg>`;
+}
+
+function afficherStats() {
+  $('#tipStats').hidden = true;
+  const stock = bottles.filter((b) => b.quantite > 0);
+  const total = stock.reduce((s, b) => s + b.quantite, 0);
+  const an = new Date().getFullYear();
+  const valeur = (b) => (valeurUnitaire(b) || 0) * b.quantite;
+  const vTotale = stock.reduce((s, b) => s + valeur(b), 0);
+  const avecPrix = stock.filter((b) => valeurUnitaire(b) > 0);
+  const nPrix = avecPrix.reduce((s, b) => s + b.quantite, 0);
+  const prets = stock.filter((b) => ['ok', 'vite', 'passe'].includes(statut(b)?.cls)).reduce((s, b) => s + b.quantite, 0);
+  const millesimes = stock.map((b) => Number(b.millesime)).filter((m) => m > 1800);
+  const tuile = (chiffre, libelle) => `<div class="tuile"><div class="chiffre">${esc(chiffre)}</div><div class="libelle">${esc(libelle)}</div></div>`;
+  $('#stTuiles').innerHTML = !total ? '<p class="petit">Ajoutez des bouteilles : les statistiques de votre cave s\'afficheront ici.</p>' : [
+    tuile(total, `bouteilles · ${stock.length} vins`),
+    tuile(fmtEuro(vTotale), 'valeur estimée'),
+    tuile(nPrix ? fmtEuro(avecPrix.reduce((s, b) => s + valeur(b), 0) / nPrix) : '—', 'prix moyen d\'une bouteille'),
+    tuile(Math.round(100 * prets / total) + ' %', 'prêtes à boire'),
+    tuile(new Set(stock.map((b) => cleDomaine(b.domaine || ''))).size, 'domaines'),
+    tuile(millesimes.length ? Math.min(...millesimes) : '—', 'plus vieux millésime'),
+  ].join('');
+  if (!total) { for (const id of ['stCrus', 'stApogee', 'stNotes', 'stTop', 'stRepartitions', 'stMillesimes', 'stBu']) $('#' + id).innerHTML = ''; return; }
+
+  // Grands crus / premiers crus
+  const niv = { gc: { n: 0, v: 0, vins: [] }, pc: { n: 0, v: 0, vins: [] }, autre: { n: 0, v: 0, vins: [] } };
+  for (const b of stock) { const x = niv[niveauStat(b)]; x.n += b.quantite; x.v += valeur(b); x.vins.push(b); }
+  const NOMS = { gc: 'Grands crus', pc: 'Premiers crus', autre: 'Villages et autres' };
+  $('#stCrus').innerHTML = `<div class="legende">${['gc', 'pc', 'autre'].map((k) => `<span><i class="niv-${k}"></i>${NOMS[k]}</span>`).join('')}</div>
+    <div class="empile" role="img" aria-label="${['gc', 'pc', 'autre'].map((k) => `${NOMS[k]} ${niv[k].n}`).join(', ')}">${['gc', 'pc', 'autre'].filter((k) => niv[k].n).map((k) =>
+      `<span class="niv-${k}" style="flex:${niv[k].n}" data-tip="${esc(`${NOMS[k]} : ${niv[k].n} bouteilles · ${fmtEuro(niv[k].v)}`)}"></span>`).join('')}</div>
+    ${['gc', 'pc', 'autre'].map((k) => `<div class="ligne-stat"><span class="nom"><strong>${NOMS[k]}</strong></span>
+      <span class="val">${niv[k].n} bout. · ${Math.round(100 * niv[k].n / total)} % · ${fmtEuro(niv[k].v)}</span></div>`).join('')}
+    ${niv.gc.vins.length ? `<p class="petit" style="margin:8px 0 0">👑 ${niv.gc.vins.sort((a, b) => (valeurUnitaire(b) || 0) - (valeurUnitaire(a) || 0)).slice(0, 6).map((b) => esc(`${b.appellation || ''} ${b.millesime || ''} (${b.domaine || ''})`.trim())).join(' · ')}${niv.gc.vins.length > 6 ? ' …' : ''}</p>` : ''}`;
+
+  // Apogée par an : de l'an dernier à 20 ans
+  const annees = Array.from({ length: 22 }, (_, i) => an - 1 + i);
+  const parAn = new Map(annees.map((a) => [a, { n: 0, vins: [] }]));
+  let sansFenetre = 0;
+  for (const b of stock) {
+    const f = anneesApogee(b);
+    if (!f) { sansFenetre += b.quantite; continue; }
+    for (const a of annees) if (a >= f[0] && a <= f[1]) { const x = parAn.get(a); x.n += b.quantite; x.vins.push(b); }
+  }
+  $('#stApogee').innerHTML = barresVerticales(annees.map((a) => {
+    const x = parAn.get(a);
+    const top = x.vins.sort((p, q) => (valeurUnitaire(q) || 0) - (valeurUnitaire(p) || 0)).slice(0, 4).map((b) => '· ' + nomVin(b)).join('\n');
+    return { label: String(a).slice(2), n: x.n, fort: a === an, tip: `${a} : ${x.n} bouteille${x.n > 1 ? 's' : ''} à l'apogée${top ? '\n' + top + (x.vins.length > 4 ? '\n…' : '') : ''}` };
+  }), { hauteur: 160, pasLabel: 2 }) + `<p class="petit" style="margin:6px 0 0">Cette année (${an}) : <strong>${parAn.get(an).n}</strong> bouteilles à leur apogée.${sansFenetre ? ` ${sansFenetre} bouteille${sansFenetre > 1 ? 's' : ''} sans fenêtre connue.` : ''}</p>`;
+
+  // Meilleures notes (dégustations notées sur 20), un vin = sa meilleure note
+  const notes = bottles.map((b) => {
+    const d = (b.degustations || []).filter((x) => Number(x.sur20) >= 0 && x.sur20 !== '' && x.sur20 != null);
+    if (!d.length) return null;
+    const best = d.reduce((m, x) => Number(x.sur20) > Number(m.sur20) ? x : m);
+    return { b, note: Number(best.sur20), date: best.date, n: d.length };
+  }).filter(Boolean).sort((a, b) => b.note - a.note).slice(0, 10);
+  $('#stNotes').innerHTML = notes.length ? notes.map((x) => `<div class="ligne-stat"><span class="note-pastille">${esc(String(x.note).replace('.', ','))}</span>
+      <span class="nom">${esc(nomVin(x.b))}</span><span class="val">${x.date ? esc(new Date(x.date).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })) : ''}</span></div>`).join('')
+    : '<p class="petit" style="margin:0">Pas encore de note. Quand vous notez une dégustation sur 20 (page du vin, ou « Je déguste une bouteille hors de ma cave »), vos meilleurs vins s\'affichent ici.</p>';
+
+  // Les plus belles bouteilles (valeur à l'unité) et les domaines qui pèsent le plus
+  const top = [...stock].filter((b) => valeurUnitaire(b) > 0).sort((a, b) => valeurUnitaire(b) - valeurUnitaire(a)).slice(0, 6);
+  const domaines = repartir(stock, (b) => (b.domaine || '').trim() || 'Producteur inconnu').map(([nom, x]) => [nom, x]).sort((a, b) => b[1].v - a[1].v).slice(0, 5);
+  $('#stTop').innerHTML = (top.length ? top.map((b) => `<div class="ligne-stat"><span class="nom">${esc(nomVin(b))}</span><span class="val">${fmtEuro(valeurUnitaire(b))}${b.quantite > 1 ? ` × ${b.quantite}` : ''}</span></div>`).join('') : '<p class="petit" style="margin:0">Aucun prix connu pour l\'instant.</p>')
+    + (domaines.length ? `<div class="rep-titre">Domaines qui pèsent le plus</div>${domaines.map(([nom, x]) => `<div class="ligne-stat"><span class="nom">${esc(nom)}</span><span class="val">${x.n} bout. · ${fmtEuro(x.v)}</span></div>`).join('')}` : '');
+
+  // Répartitions
+  const tranche = (b) => { const v = valeurUnitaire(b) || 0; return !v ? 'Prix inconnu' : v < 20 ? 'Moins de 20 €' : v < 40 ? '20 à 40 €' : v < 80 ? '40 à 80 €' : v < 150 ? '80 à 150 €' : '150 € et plus'; };
+  const ORDRE_PRIX = ['Moins de 20 €', '20 à 40 €', '40 à 80 €', '80 à 150 €', '150 € et plus', 'Prix inconnu'];
+  const bourgogne = stock.filter((b) => regionVin(b).region === 'Bourgogne');
+  $('#stRepartitions').innerHTML =
+    barresRep('Régions', repartir(stock, (b) => regionVin(b).region), total) +
+    (bourgogne.length ? barresRep('En Bourgogne', repartir(bourgogne, (b) => regionVin(b).sous || 'Bourgogne régionale'), total) : '') +
+    barresRep('Appellations', repartir(stock, (b) => appellationVillage(b) || 'Inconnue'), total, 10) +
+    barresRep('Couleurs', repartir(stock, (b) => b.couleur), total) +
+    barresRep('Prix par bouteille', repartir(stock, tranche).sort((a, b) => ORDRE_PRIX.indexOf(a[0]) - ORDRE_PRIX.indexOf(b[0])), total, 6) +
+    barresRep('Garde', repartir(stock, (b) => ({ tot: 'Trop tôt', ok: 'Prêt à boire', vite: 'À boire bientôt', passe: 'À boire d\'urgence' }[statut(b)?.cls] || 'Fenêtre inconnue')), total);
+
+  // Millésimes
+  const parMill = new Map();
+  for (const b of stock) { const m = Number(b.millesime); if (m > 1800 && m <= an + 1) parMill.set(m, (parMill.get(m) || 0) + b.quantite); }
+  const ms = [...parMill.keys()].sort((a, b) => a - b);
+  if (ms.length) {
+    const de = Math.max(ms[0], ms[ms.length - 1] - 29), reste = ms.filter((m) => m < de).reduce((s, m) => s + parMill.get(m), 0);
+    const liste = Array.from({ length: ms[ms.length - 1] - de + 1 }, (_, i) => de + i);
+    $('#stMillesimes').innerHTML = barresVerticales(liste.map((m) => ({ label: String(m).slice(2), n: parMill.get(m) || 0, fort: false, tip: `${m} : ${parMill.get(m) || 0} bouteille${(parMill.get(m) || 0) > 1 ? 's' : ''}` })), { hauteur: 140, pasLabel: Math.ceil(liste.length / 12) })
+      + (reste ? `<p class="petit" style="margin:6px 0 0">Plus ${reste} bouteille${reste > 1 ? 's' : ''} d'avant ${de}.</p>` : '');
+  } else $('#stMillesimes').innerHTML = '<p class="petit" style="margin:0">Aucun millésime renseigné.</p>';
+
+  // Bu mois par mois, sur 12 mois (ailleurs compris)
+  const mois = Array.from({ length: 12 }, (_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 11 + i); return d; });
+  const cle = (d) => `${d.getFullYear()}-${d.getMonth()}`;
+  const parMois = new Map(mois.map((d) => [cle(d), 0]));
+  let bu12 = 0;
+  for (const b of bottles) for (const o of b.ouvertures || []) { const d = new Date(o); const k = cle(d); if (parMois.has(k)) { parMois.set(k, parMois.get(k) + 1); bu12++; } }
+  $('#stBu').innerHTML = bu12 ? barresVerticales(mois.map((d, i) => ({
+    label: d.toLocaleDateString('fr-FR', { month: 'narrow' }), n: parMois.get(cle(d)), fort: i === 11,
+    tip: `${d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })} : ${parMois.get(cle(d))} bouteille${parMois.get(cle(d)) > 1 ? 's' : ''}`,
+  })), { hauteur: 130 }) + `<p class="petit" style="margin:6px 0 0">${bu12} bouteille${bu12 > 1 ? 's' : ''} sur 12 mois.</p>`
+    : '<p class="petit" style="margin:0">Rien de noté sur les 12 derniers mois. Une bouteille bue (« − » puis « Je l\'ai bue ») s\'ajoute ici.</p>';
+}
+
+// Info-bulle des graphiques : au survol, au toucher et au clavier ; contenu posé en texte (jamais en HTML)
+(() => {
+  const tip = () => $('#tipStats');
+  const montrer = (el, x, y) => {
+    const t = tip();
+    t.textContent = el.dataset.tip;
+    t.hidden = false;
+    const w = t.offsetWidth, h = t.offsetHeight;
+    t.style.left = Math.max(8, Math.min(innerWidth - w - 8, x - w / 2)) + 'px';
+    t.style.top = Math.max(8, y - h - 12) + 'px';
+  };
+  const vue = () => $('#vueStats');
+  document.addEventListener('pointermove', (e) => {
+    const el = e.target.closest?.('#vueStats [data-tip]');
+    if (el) montrer(el, e.clientX, e.clientY); else if (!tip().hidden && e.pointerType === 'mouse') tip().hidden = true;
+  });
+  document.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest?.('#vueStats [data-tip]');
+    if (el) montrer(el, e.clientX, e.clientY); else tip().hidden = true;
+  });
+  document.addEventListener('focusin', (e) => {
+    const el = e.target.closest?.('#vueStats [data-tip]');
+    if (!el) { tip().hidden = true; return; }
+    const r = el.getBoundingClientRect();
+    montrer(el, r.left + r.width / 2, r.top);
+  });
+  addEventListener('scroll', () => { if (!vue().hidden) tip().hidden = true; }, { passive: true });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') tip().hidden = true; });
+})();
+
 /* ---------- Conseils (sommelier) ---------- */
 // Répartition de la cave calculée sur l'appareil (régions, appellations, couleurs, garde) + pistes simples ;
 // goûts, notes retenues par Claude et dernier conseil dans la table sommelier (une ligne par compte)
@@ -4098,6 +4342,7 @@ $('#cnsNotes').addEventListener('click', async (e) => {
   catch (err) { toast('Impossible : ' + err.message); }
 });
 
+$('#cnsVersStats').onclick = () => changerVue('stats');
 $('#cnsDemander').onclick = () => ouvrirDansClaude(`Dans Ma Cave, sois mon sommelier : lis profil_sommelier (mes goûts, ce que tu as retenu de moi, ton dernier conseil et la répartition de ma cave), regarde ma cave avec ma_cave, puis dis-moi quoi acheter pour la compléter ou la rééquilibrer (régions, appellations, couleurs, vins prêts à boire ou de garde), avec des vins concrets dans mon budget, en vérifiant prix et disponibilité sur le web. Enregistre ensuite ton conseil avec enregistrer_conseil.`);
 $('#btnAilleursCave').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
 
@@ -4109,6 +4354,8 @@ function changerVue(v) {
   $('#vueCommandes').hidden = v !== 'commandes';
   $('#vueBues').hidden = v !== 'bues';
   if (v === 'bues') afficherBues();
+  $('#vueStats').hidden = v !== 'stats';
+  if (v === 'stats') afficherStats();
   $('#vueConseils').hidden = v !== 'conseils';
   if (v === 'conseils') afficherConseils();
   $('#vueAdmin').hidden = v !== 'admin';
