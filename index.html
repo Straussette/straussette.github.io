@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-26.2">
+<meta name="app-version" content="2026-11-26.3">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -188,6 +188,8 @@
   .note-pastille { display:inline-block; min-width:3.2em; text-align:center; font-weight:700; border-radius:8px; padding:2px 6px;
     background:color-mix(in srgb, var(--accent) 12%, var(--surface)); color:var(--text); margin-right:8px; }
   .note-carte { font-weight:600; color:var(--text); }
+  .affaire { font-weight:600; color:var(--text); }
+  .affaire.bon { color:var(--ok); } .affaire.cher { color:var(--passe); }
   .avis-vin { display:flex; gap:8px; align-items:baseline; margin:4px 0 8px; font-size:.92rem; }
   .ligne-stat .tag { font-size:.75rem; color:var(--muted); }
   .ligne-stat { display:flex; align-items:baseline; gap:6px; padding:6px 0; border-top:1px solid var(--border); font-size:.92rem; }
@@ -1070,6 +1072,16 @@ function marcheUnitaire(b) {
   const m = min && max ? (min + max) / 2 : (min || max);
   return m ? m * facteurFormat(b.format) : 0;
 }
+// Bonne ou mauvaise affaire : prix payé contre prix du marché (la valeur de la cave, elle, reste celle du marché)
+function affaire(b) {
+  const paye = Number(b.prix) || 0, marche = marcheUnitaire(b);
+  if (!(paye > 0) || !(marche > 0)) return null;
+  const ecart = Math.round((paye - marche) / marche * 100);
+  return { paye, marche, ecart, cls: ecart <= -15 ? 'bon' : ecart >= 15 ? 'cher' : '' };
+}
+const texteEcart = (e) => e <= -15 ? `${-e} % sous le marché` : e >= 15 ? `${e} % au-dessus du marché` : 'au prix du marché';
+// Prix qui sert à juger l'affaire : le prix payé s'il est connu, sinon le prix du marché
+const prixAffaire = (b) => Number(b.prix) > 0 ? Number(b.prix) : valeurUnitaire(b);
 
 // Blanc sec très âgé (25 ans et plus) : probablement passé, quoi que dise la fiche (copié dans le connecteur).
 // Liquoreux, effervescents, vins jaunes et vins de paille, faits pour durer, ne sont pas concernés.
@@ -1149,6 +1161,7 @@ function svgBouteille(b) {
 /* ---------- Affichage ---------- */
 function carte(b, niveau = 0) {
   const st = statut(b);
+  const af = affaire(b);
   const c = slug(b.couleur);
   const sousTitre = [b.appellation, b.millesime || 'NM'].filter(Boolean).join(' · ');
   return `
@@ -1161,6 +1174,7 @@ function carte(b, niveau = 0) {
           ${st ? `<div class="badge ${st.cls}">${st.txt}</div>` : ''}
           ${b.emplacement ? `<div class="loc">📍 ${esc(b.emplacement)}</div>` : ''}
           ${valeurUnitaire(b) || noteVin(b) != null ? `<div class="valeur">${noteVin(b) != null ? `<span class="note-carte" title="${esc(b.avis.verdict || '')}">★ ${fmtNote(noteVin(b))}/20</span>${valeurUnitaire(b) ? ' · ' : ''}` : ''}${valeurUnitaire(b) ? `≈ ${fmtEuro(valeurUnitaire(b))} / ${b.format ? esc(b.format.toLowerCase()) : 'bouteille'}` : ''}</div>` : ''}
+          ${af && af.cls ? `<div class="valeur"><span class="affaire ${af.cls}">${af.cls === 'bon' ? '🔥' : '💸'} payé ${fmtEuro(af.paye)} · ${texteEcart(af.ecart)}</span></div>` : ''}
         </div>
       </button>
       <div class="qty">
@@ -2485,6 +2499,12 @@ function afficherVue(message = '', erreur = false, enCours = false) {
     </div>
     ${noteVin(b) != null ? `<div class="avis-vin"><span class="note-pastille">${fmtNote(noteVin(b))}/20</span><span>${esc(b.avis.verdict || '')}
       <span class="petit">· avis de votre Claude (réputation, critiques, prix), pas une dégustation</span></span></div>` : ''}
+    ${(() => {
+      const af = affaire(b);
+      if (af) return `<div class="avis-vin"><span class="affaire ${af.cls}">${af.cls === 'bon' ? '🔥' : af.cls === 'cher' ? '💸' : '💰'} Payé ${fmtEuro(af.paye)} · vaut ≈ ${fmtEuro(af.marche)}</span><span class="petit">${texteEcart(af.ecart)}${af.cls === 'bon' && noteVin(b) >= 15 ? ', et bien noté : un beau coup' : ''}</span></div>`;
+      return b.quantite > 0 && !b.horsCave && marcheUnitaire(b) > 0
+        ? `<div class="petit"><button type="button" class="link" data-vue="prixPaye">💰 Vous l'avez payé combien ? Indiquez-le pour savoir si c'est une affaire.</button></div>` : '';
+    })()}
     ${b.quantite === 0 && b.horsCave ? `<div class="petit">🥂 Goûté ailleurs, pas dans votre cave. Vous en voulez ? « + » l'ajoute à votre cave.</div>`
       : b.quantite === 0 ? `<div class="petit">📖 Plus en cave — ce vin reste en mémoire.${(b.ouvertures || []).length ? ` Dernière bouteille ouverte le ${new Date(b.ouvertures.at(-1)).toLocaleDateString('fr-FR')}.` : ''}</div>`
       : (b.emplacement ? `<div class="petit">📍 ${esc(b.emplacement)}</div>` : '')}
@@ -2563,6 +2583,13 @@ $('#vueContenu').addEventListener('click', async (e) => {
     retourVue = b.id;
     $('#dlgVue').close();
     return ouvrirFormulaire(b);
+  }
+  if (act === 'prixPaye') {
+    retourVue = b.id;
+    $('#dlgVue').close();
+    ouvrirFormulaire(b);
+    setTimeout(() => { const c = $('#f-prix'); if (c) { c.scrollIntoView({ block: 'center' }); c.focus(); } }, 150);
+    return;
   }
   if (act === 'autreFormat') {
     const bloc = $('#autreFormatBloc');
@@ -4092,40 +4119,44 @@ function pepitesHTML(stock) {
   const prixMed = (() => { const p = stock.map(valeurUnitaire).filter((x) => x > 0).sort((a, b) => a - b); return p.length ? p[Math.floor(p.length / 2)] : 0; })();
   const ligne = (b, droite) => `<div class="ligne-stat"><span class="note-pastille">${fmtNote(noteVin(b))}</span>
     <span class="nom">${esc(nomVin(b))}<br><span class="tag">${esc(b.avis.verdict || '')}</span></span><span class="val">${droite}</span></div>`;
-  const prixTxt = (b) => valeurUnitaire(b) ? fmtEuro(valeurUnitaire(b)) : '';
+  const prixTxt = (b) => Number(b.prix) > 0 ? `payé ${fmtEuro(Number(b.prix))}` : valeurUnitaire(b) ? fmtEuro(valeurUnitaire(b)) : '';
   const bloc = (titre, aide, liste, droite = prixTxt) => liste.length
     ? `<div class="rep-titre">${titre}</div><p class="petit" style="margin:0 0 4px">${aide}</p>${liste.map((b) => ligne(b, droite(b))).join('')}` : '';
   // Pépites : très bien notées pour un prix au plus médian ; valeurs sûres : les mieux notées ;
-  // moins bonnes affaires : note modeste alors que le prix est au-dessus de la médiane
-  const pepites = notes.filter((b) => noteVin(b) >= 16 && valeurUnitaire(b) > 0 && valeurUnitaire(b) <= prixMed)
-    .sort((a, b) => noteVin(b) - noteVin(a) || valeurUnitaire(a) - valeurUnitaire(b)).slice(0, 6);
+  // moins bonnes affaires : note modeste alors que le prix est au-dessus de la médiane.
+  // Le prix qui juge l'affaire est le prix payé s'il est connu (prixAffaire), sinon le prix du marché.
+  const pepites = notes.filter((b) => noteVin(b) >= 16 && prixAffaire(b) > 0 && prixAffaire(b) <= prixMed)
+    .sort((a, b) => noteVin(b) - noteVin(a) || prixAffaire(a) - prixAffaire(b)).slice(0, 6);
   const sures = notes.filter((b) => noteVin(b) >= 17 && !pepites.includes(b)).sort((a, b) => noteVin(b) - noteVin(a)).slice(0, 6);
-  const moins = notes.filter((b) => noteVin(b) <= 15 && valeurUnitaire(b) > prixMed)
-    .sort((a, b) => (noteVin(a) - noteVin(b)) || valeurUnitaire(b) - valeurUnitaire(a)).slice(0, 6);
+  const moins = notes.filter((b) => noteVin(b) <= 15 && prixAffaire(b) > prixMed)
+    .sort((a, b) => (noteVin(a) - noteVin(b)) || prixAffaire(b) - prixAffaire(a)).slice(0, 6);
   // Achats : prix payé contre prix du marché de la fiche
-  const achats = stock.filter((b) => Number(b.prix) > 0 && marcheUnitaire(b) > 0)
-    .map((b) => ({ b, ecart: Math.round((Number(b.prix) - marcheUnitaire(b)) / marcheUnitaire(b) * 100) }));
-  const ligneAchat = ({ b, ecart }) => `<div class="ligne-stat"><span class="nom">${esc(nomVin(b))}<br>
-    <span class="tag">payé ${fmtEuro(Number(b.prix))} · marché ${fmtEuro(marcheUnitaire(b))}</span></span><span class="val">${ecart > 0 ? '+' : ''}${ecart} %</span></div>`;
-  const bons = achats.filter((x) => x.ecart <= -20).sort((a, b) => a.ecart - b.ecart).slice(0, 5);
+  const achats = stock.map((b) => ({ b, ...affaire(b) })).filter((x) => x.paye > 0);
+  const ligneAchat = ({ b, paye, marche, ecart }) => `<div class="ligne-stat">${noteVin(b) != null ? `<span class="note-pastille">${fmtNote(noteVin(b))}</span>` : ''}<span class="nom">${esc(nomVin(b))}<br>
+    <span class="tag">payé ${fmtEuro(paye)} · vaut ≈ ${fmtEuro(marche)}</span></span><span class="val">${ecart > 0 ? '+' : ''}${ecart} %</span></div>`;
+  // Mes coups : achetés bien sous le marché, les mieux notés d'abord (un 16 à moitié prix passe devant un 12 à moitié prix)
+  const poids = (x) => -x.ecart * (noteVin(x.b) != null ? noteVin(x.b) / 15 : 0.8);
+  const bons = achats.filter((x) => x.ecart <= -20).sort((a, b) => poids(b) - poids(a)).slice(0, 6);
   const chers = achats.filter((x) => x.ecart >= 15).sort((a, b) => b.ecart - a.ecart).slice(0, 5);
+  const sansPrix = stock.filter((b) => !(Number(b.prix) > 0) && marcheUnitaire(b) > 0).length;
   const branche = !!(etatClaudeMemo && etatClaudeMemo.uid === session?.user?.id && etatClaudeMemo.etat);
   // Rien tant que l'état de Claude n'est pas connu (lu à l'ouverture de l'onglet)
   const appel = sansNote && etatClaudeMemo && etatClaudeMemo.uid === session?.user?.id
     ? (branche ? `<div class="actions" style="margin:8px 0 0"><button type="button" class="btn ${notes.length ? 'secondary' : 'primary'} petit-btn" id="stNoter">🤖 Faire noter mes vins par mon Claude (${sansNote} sans note)</button></div>`
       : `<p class="petit" style="margin:8px 0 0">${sansNote} vin${sansNote > 1 ? 's' : ''} sans note. Votre Claude peut les noter sur 20 d'après leur réputation et les critiques : <button type="button" class="link" data-claude="brancher">🤖 brancher mon Claude</button>.</p>`)
     : '';
-  const corps = bloc('💎 Pépites', `Notées 16 et plus, pour ${prixMed ? fmtEuro(prixMed) : 'un prix'} ou moins (prix médian de votre cave).`, pepites)
+  const corps = (bons.length ? `<div class="rep-titre">🔥 Mes coups</div><p class="petit" style="margin:0 0 4px">Payés bien en dessous de leur valeur, les mieux notés d'abord.</p>${bons.map(ligneAchat).join('')}` : '')
+    + bloc('💎 Pépites', `Notées 16 et plus, pour ${prixMed ? fmtEuro(prixMed) : 'un prix'} ou moins (prix payé s'il est connu, sinon prix du marché ; ${prixMed ? fmtEuro(prixMed) : 'ce prix'} = prix médian de votre cave).`, pepites)
     + bloc('🏆 Valeurs sûres', 'Les mieux notées de votre cave.', sures)
-    + bloc('🤔 Moins bonnes affaires', 'Notes modestes pour un prix au-dessus de la médiane.', moins)
-    + (bons.length ? `<div class="rep-titre">👍 Mes meilleurs achats</div><p class="petit" style="margin:0 0 4px">Payés bien en dessous du prix du marché.</p>${bons.map(ligneAchat).join('')}` : '')
-    + (chers.length ? `<div class="rep-titre">💸 Payés plus cher que le marché</div>${chers.map(ligneAchat).join('')}` : '');
+    + bloc('🤔 Moins bonnes affaires', 'Notes modestes pour un prix au-dessus de la médiane (prix payé s\'il est connu).', moins)
+    + (chers.length ? `<div class="rep-titre">💸 Payés plus cher que le marché</div>${chers.map(ligneAchat).join('')}` : '')
+    + (sansPrix ? `<p class="petit" style="margin:8px 0 0">💰 ${sansPrix} vin${sansPrix > 1 ? 's' : ''} sans prix d'achat : indiquez ce que vous les avez payés (fiche du vin → « Modifier ») pour voir vos coups.</p>` : '');
   return (corps || `<p class="petit" style="margin:0">${notes.length ? 'Pas encore assez de vins notés ou de prix d\'achat pour faire ressortir des pépites.' : 'Aucun vin noté pour l\'instant. Avec une note sur 20 par vin, vos pépites et vos moins bonnes affaires apparaissent ici.'}</p>`)
     + (notes.length ? `<p class="petit" style="margin:8px 0 0">Notes de votre Claude d'après la réputation, les critiques et le prix : ce ne sont pas des dégustations.</p>` : '')
     + appel;
 }
 
-const messageNoterCave = () => `Dans Ma Cave, note les vins de ma cave qui n'ont pas encore de note (note_sur_20 absente dans ma_cave) : pour chacun, une note sur 20 et un verdict franc d'une phrase, d'après la réputation du domaine et du climat, les critiques publiées sur ce millésime (cherche sur le web) et le rapport qualité-prix au prix du marché. Enregistre par lots avec enregistrer_avis. Laisse sans note ce sur quoi tu ne trouves rien de solide. Ensuite, dis-moi mes pépites, mes valeurs sûres et mes moins bonnes affaires.`;
+const messageNoterCave = () => `Dans Ma Cave, note les vins de ma cave qui n'ont pas encore de note (note_sur_20 absente dans ma_cave) : pour chacun, une note sur 20 et un verdict franc d'une phrase, d'après la réputation du domaine et du climat, les critiques publiées sur ce millésime (cherche sur le web) et le rapport qualité-prix : au prix payé s'il est connu (prix_paye_eur dans ma_cave ; commence alors le verdict par « payé X € pour un prix de marché de Y € »), sinon au prix du marché. Enregistre par lots avec enregistrer_avis. Laisse sans note ce sur quoi tu ne trouves rien de solide. Ensuite, dis-moi mes pépites, mes valeurs sûres et mes moins bonnes affaires.`;
 
 // Diagramme en barres verticales ; donnees = [{label, n, tip, fort}] ; chaque barre porte une info-bulle
 function barresVerticales(donnees, { hauteur = 150, pasLabel = 1 } = {}) {

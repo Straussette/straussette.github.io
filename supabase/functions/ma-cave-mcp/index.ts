@@ -27,7 +27,7 @@ const CONSIGNES = `Tu es le sommelier personnel de l'utilisateur et tu as accès
 - Commandes groupées : mes_commandes liste celles qu'il organise ; ajouter_vins_commande y ajoute les vins d'une offre (prix TTC par bouteille, taille de caisse si indiquée). Pour aider à choisir, vins_commande liste les vins d'une commande (organisée ou rejointe) et enregistrer_fiche_commande leur donne une fiche (recherche web, mêmes champs qu'une fiche de cave, avec le prix du marché pour comparer au prix proposé), et enregistrer_domaine_commande présente chaque domaine qui ne l'est pas encore (histoire, vignoble, style, cuvées phares) : tous les participants les voient en touchant le vin dans la commande. Pour une offre de caviste, donne aussi ta note sur 20 et un verdict franc par vin (note, verdict dans proposer_vins) et une synthèse (synthese : en_bref, a_verifier, lien) ; pour une commande déjà créée, enregistre-les avec enregistrer_synthese_commande. Les notes combinent réputation du climat, critiques et rapport qualité-prix : dis que ce n'est pas une dégustation.
 - Conseils d'achat et goûts : au début d'une conversation de conseil (quoi acheter, compléter ou rééquilibrer sa cave, quoi boire selon ses goûts), lis profil_sommelier : ses préférences, ce que tu as déjà retenu de lui, ton dernier conseil et la répartition de sa cave (régions, appellations, couleurs, garde, prix). Appuie-toi sur ces chiffres : dis ce qui manque ou déséquilibre (une région trop dominante, des appellations absentes, trop peu de blancs ou de vins prêts à boire) et propose des achats concrets (domaines, cuvées, appellations, millésimes, fourchette de prix) dans son budget, en vérifiant sur le web prix et disponibilité. Enregistre ensuite ton conseil avec enregistrer_conseil : il le retrouve dans l'onglet « 🎯 Conseils » de l'app. Quand il t'apprend quelque chose de durable sur ses goûts (« je n'aime pas les vins boisés », « budget 40 € max », « je veux plus de Rhône »), note-le avec noter_preference sans attendre qu'il te le demande, et supprime avec oublier_preference ce qui n'est plus vrai.
 - Conseil personnel sur une commande groupée (« qu'est-ce que je prends ? ») : lis profil_sommelier (goûts, budget, répartition de sa cave) et vins_commande (prix proposé, prix du marché, appellation, ce qu'il a déjà en cave du même village). Conseille-lui quelques vins et combien en prendre, en expliquant pour chacun : bon prix par rapport au marché, complète un manque de sa cave (appellation, région, couleur, vins prêts à boire), colle à ses goûts et à son budget. Dis aussi franchement ce qu'il peut laisser (déjà bien fourni, prix élevé). Enregistre-le avec enregistrer_conseil_commande : il le voit dans la commande, et lui seul.
-- Noter les vins de sa cave (« note mes vins », pépites, valeurs sûres) : pour chaque vin sans note_sur_20 dans ma_cave, donne une note sur 20 et un verdict franc d'une phrase. La note combine la réputation du domaine et du climat, les critiques publiées sur ce millésime (cherche sur le web) et le rapport qualité-prix au prix du marché. Dis que ce n'est pas une dégustation. Enregistre par lots avec enregistrer_avis. Ne note pas un vin sur lequel tu ne trouves rien de solide : laisse-le sans note et dis-le.
+- Noter les vins de sa cave (« note mes vins », pépites, valeurs sûres) : pour chaque vin sans note_sur_20 dans ma_cave, donne une note sur 20 et un verdict franc d'une phrase. La note combine la réputation du domaine et du climat, les critiques publiées sur ce millésime (cherche sur le web) et le rapport qualité-prix. Si le prix payé est connu (prix_paye_eur et ecart_prix_paye dans ma_cave), juge l'affaire sur ce prix et commence le verdict par « payé X € pour un prix de marché de Y € » : un vin bien noté payé très en dessous de sa valeur est un coup à mettre en avant. Sinon, juge au prix du marché. La valeur de la cave reste toujours celle du marché. Dis que ce n'est pas une dégustation. Enregistre par lots avec enregistrer_avis. Ne note pas un vin sur lequel tu ne trouves rien de solide : laisse-le sans note et dis-le.
 - Les changements apparaissent dans l'app à sa prochaine ouverture (ou quand il y revient).`;
 
 // ---------- Supabase (clé secrète du projet) ----------
@@ -135,6 +135,12 @@ function valeurUnitaire(b: Vin): number {
   const marche = min && max ? (min + max) / 2 : (min || max);
   if (marche) return marche * facteurFormat(b.format);
   return Number(b.prix) || 0;
+}
+// Prix du marché à l'unité (fiche), sans repli sur le prix payé : pour juger un achat (copié d'index.html)
+function marcheUnitaire(b: Vin): number {
+  const min = Number(b.prixMin) || 0, max = Number(b.prixMax) || 0;
+  const m = min && max ? (min + max) / 2 : (min || max);
+  return m ? m * facteurFormat(b.format) : 0;
 }
 // Blanc sec très âgé (25 ans et plus) : probablement passé, quoi que dise la fiche (copié d'index.html).
 // Liquoreux, effervescents, vins jaunes et vins de paille, faits pour durer, ne sont pas concernés.
@@ -293,6 +299,9 @@ function resume(b: Vin) {
     quantite: Number(b.quantite) || 0,
     statut: statut(b),
     valeur_unitaire_eur: Math.round(valeurUnitaire(b)) || undefined,
+    prix_paye_eur: Number(b.prix) > 0 ? Number(b.prix) : undefined,
+    ecart_prix_paye: Number(b.prix) > 0 && marcheUnitaire(b) > 0
+      ? `${Math.round((Number(b.prix) - marcheUnitaire(b)) / marcheUnitaire(b) * 100)} % par rapport au prix du marché` : undefined,
     emplacement: b.emplacement || undefined,
     fiche: !!b.description,
     domaine_presente: !!b.domaineInfo,
@@ -647,7 +656,7 @@ const OUTILS = [
   },
   {
     name: "enregistrer_avis",
-    description: "Note des vins de sa cave sur 20, avec un verdict d'une phrase (réputation, critiques du millésime, rapport qualité-prix : ce n'est pas une dégustation). Jusqu'à 100 vins par appel (id donnés par ma_cave). L'app s'en sert pour repérer pépites, valeurs sûres et moins bonnes affaires.",
+    description: "Note des vins de sa cave sur 20, avec un verdict d'une phrase (réputation, critiques du millésime, rapport qualité-prix : ce n'est pas une dégustation). Le rapport qualité-prix se juge au prix payé quand ma_cave donne prix_paye_eur (le verdict commence alors par « payé X € pour un prix de marché de Y € »), sinon au prix du marché. Jusqu'à 100 vins par appel (id donnés par ma_cave). L'app s'en sert pour repérer pépites, valeurs sûres et moins bonnes affaires.",
     inputSchema: {
       type: "object",
       properties: {
@@ -925,7 +934,9 @@ async function appelerOutil(uid: string, nom: string, a: Vin): Promise<unknown> 
       const cle = cleDomaine(a.domaine);
       if (!cle) throw new Error("nom de domaine vide");
       const cave = await lireCave(uid);
-      const memes = cave.filter((x) => x.domaine && memeDomaine(cleDomaine(x.domaine), cle));
+      // Le nom exact d'abord : « Denis Père & Fils » (clé « denis ») ne doit pas emporter « Denis Fournier »
+      const exacts = cave.filter((x) => x.domaine && cleDomaine(x.domaine) === cle);
+      const memes = exacts.length ? exacts : cave.filter((x) => x.domaine && memeDomaine(cleDomaine(x.domaine), cle));
       if (!memes.length) throw new Error("aucun vin de ce domaine dans ta cave (vérifie l'écriture avec ma_cave)");
       const site = estUrl(a.site) ? borne(a.site, 300) : "";
       const changes = memes.filter((x) => a.remplacer || !x.domaineInfo);
