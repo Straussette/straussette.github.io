@@ -49,7 +49,7 @@ Romain n'a pas besoin de Supabase pour modifier l'app (`index.html`). Les change
 
 1. **Une branche par changement**, nommée en français (`stats-millesimes`, `correctif-fenetre-ajout`…), puis une **PR vers `main`**. On ne pousse plus directement sur `main` : c'est la version en ligne pour tout le monde.
 2. **Relecture obligatoire** : l'agent `relecteur-cave` (`.claude/agents/relecteur-cave.md`). Corriger jusqu'au verdict « Prêt à pousser », puis coller son rapport dans la PR sous `## Relecture (relecteur-cave)`.
-3. **Version de l'app** : chaque PR qui touche `index.html` augmente `app-version` (`AAAA-MM-JJ.N`). Si deux PR se croisent, la seconde se met à jour sur `main` et reprend un numéro au-dessus.
+3. **Version de l'app** : chaque PR qui touche `index.html` augmente `app-version` (`AAAA-MM-JJ.N`) et met la même valeur dans `version.txt`. Si deux PR se croisent, la seconde se met à jour sur `main` et reprend un numéro au-dessus.
 4. **Qui fusionne** : l'auteur demande, l'autre jette un œil, puis Paul fusionne. GitHub Pages publie en une minute environ.
 5. **Conventions** (détails dans `CLAUDE.md`) :
    - tout en français : interface, noms dans le code, commentaires, commits ;

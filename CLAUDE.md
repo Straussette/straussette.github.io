@@ -13,6 +13,8 @@ Le dépôt contient trois fichiers de code :
 - `supabase/functions/chercher-vin/index.ts` : une fonction serveur Supabase (Deno) qui appelle l'API Claude.
 - `supabase/functions/ma-cave-mcp/index.ts` : le connecteur « Ma Cave » pour Claude (serveur MCP), qui n'appelle pas l'API Claude.
 
+`version.txt` ne contient que la version de l'app (la même que `app-version` dans `index.html`), lue par la mise à jour automatique.
+
 Les modèles des e-mails de Supabase Auth (confirmation, mot de passe, changement d'adresse, lien magique) sont dans `supabase/emails/`, envoyés par Resend depuis `macave@envoi.pstrauss.org` : à recoller dans Supabase s'ils changent (voir `supabase/emails/LISEZMOI.md`).
 
 Le schéma de la base, les règles d'accès (RLS), les fonctions RPC et les espaces de stockage sont configurés dans le projet Supabase et **ne sont pas** dans ce dépôt.
@@ -30,7 +32,7 @@ Il n'y a ni build, ni gestionnaire de paquets, ni linter, ni tests.
 
 ## Conventions
 
-- **À chaque modification de `index.html`, augmenter `<meta name="app-version" content="AAAA-MM-JJ.N">`.** `verifierMiseAJour()` compare cette valeur à celle de la version en ligne et force le rechargement quand elles diffèrent. Sans cette augmentation, les utilisateurs gardent l'ancienne version.
+- **À chaque modification de `index.html`, augmenter `<meta name="app-version" content="AAAA-MM-JJ.N">` et écrire la même valeur dans `version.txt`.** `verifierMiseAJour()` lit `version.txt` (quelques octets, sinon la page entière en secours), compare avec la version affichée et force le rechargement quand elles diffèrent. Sans cette augmentation, ou si `version.txt` n'est pas à jour, les utilisateurs gardent l'ancienne version.
 - `index.html` est découpé en sections repérées par `/* ---------- Titre ---------- */`, côté CSS comme côté JS. Ajouter le code dans la section concernée, ou créer une nouvelle section dans le même style.
 - Les couleurs passent par des variables CSS définies sur `:root`, avec le mode sombre géré par `prefers-color-scheme` et `[data-theme]`. Utiliser les variables existantes (`--accent`, `--surface`, `--c-rouge`…) plutôt que des couleurs en dur.
 - Échapper les valeurs insérées dans le HTML généré avec `esc()`.
