@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-26.3">
+<meta name="app-version" content="2026-11-28.2">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -14,17 +14,21 @@
     --ok:#2f7d4f; --vite:#b8661b; --passe:#b42a2a; --tot:#6b6f80;
     --shadow:0 1px 3px rgba(43,29,32,.08), 0 4px 14px rgba(43,29,32,.06);
     --c-rouge:#7b1e3a; --c-blanc:#d9c47c; --c-rose:#e99aa6; --c-effervescent:#c9bb72; --c-liquoreux:#cf8b2c;
+    --or:#8a6a12; --or-fond:#d4a72c;  /* pastille Grand Cru / 1er Cru */
+    --ombre-bouton:0 1px 4px rgba(0,0,0,.18);
     color-scheme:light;
   }
+  /* Fond sombre derrière les fenêtres : défini sur ::backdrop même, car les anciens Safari n'y transmettent pas les variables de :root */
+  ::backdrop { --voile:rgba(20,10,12,.55); }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg:#17110f; --surface:#221a19; --text:#f3ebe8; --muted:#a8999a; --border:#3a2e2d;
-      --accent:#c4466b; --shadow:none; color-scheme:dark;
+      --accent:#c4466b; --shadow:none; --or:#e2c15a; color-scheme:dark;
     }
   }
   :root[data-theme="dark"] {
     --bg:#17110f; --surface:#221a19; --text:#f3ebe8; --muted:#a8999a; --border:#3a2e2d;
-    --accent:#c4466b; --shadow:none; color-scheme:dark;
+    --accent:#c4466b; --shadow:none; --or:#e2c15a; color-scheme:dark;
   }
 
   * { box-sizing:border-box; }
@@ -46,7 +50,7 @@
   .stats { margin:4px 0 0; opacity:.85; font-size:.95rem; }
   .top .wrap { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
   .compte {
-    flex:none; background:rgba(255,255,255,.16); color:var(--on-accent); border:0; border-radius:999px;
+    flex:none; background:color-mix(in srgb, var(--on-accent) 16%, transparent); color:var(--on-accent); border:0; border-radius:999px;
     padding:7px 12px; font:inherit; font-size:.85rem; cursor:pointer; white-space:nowrap; max-width:46vw;
     overflow:hidden; text-overflow:ellipsis;
   }
@@ -145,7 +149,7 @@
   .fab {
     background:var(--accent); color:var(--on-accent); border:0; border-radius:999px;
     padding:14px 20px; font:inherit; font-weight:600; cursor:pointer; white-space:nowrap;
-    box-shadow:0 6px 20px rgba(123,30,58,.35);
+    box-shadow:0 6px 20px color-mix(in srgb, var(--accent) 35%, transparent);
   }
   .fab.alt { background:var(--surface); color:var(--accent); border:1px solid var(--border); }
 
@@ -279,13 +283,13 @@
     max-height:calc(100dvh - 24px); background:var(--surface); color:var(--text);
     overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
   }
-  dialog::backdrop { background:rgba(20,10,12,.55); }
+  dialog::backdrop { background:var(--voile); }
   /* Croix de fermeture, toujours visible en haut à droite de chaque fenêtre */
   .fermer-x {
     position:sticky; top:calc(8px + env(safe-area-inset-top)); z-index:5; display:grid; place-items:center;
     width:36px; height:36px; margin:8px 8px -44px auto; border:0; border-radius:50%;
     background:color-mix(in srgb, var(--surface) 85%, transparent); color:var(--text);
-    box-shadow:0 1px 4px rgba(0,0,0,.18); font-size:1.1rem; line-height:1; cursor:pointer;
+    box-shadow:var(--ombre-bouton); font-size:1.1rem; line-height:1; cursor:pointer;
     -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
   }
   dialog h2 { padding-right:40px; }
@@ -344,7 +348,7 @@
   .frise div span { display:block; font-size:.95rem; }
   .frise .actuelle { outline:2px solid var(--b); }
   .cru { display:inline-block; font-size:.72rem; font-weight:700; padding:1px 6px; border-radius:6px; margin-left:4px; vertical-align:1px;
-         color:#8a6a12; background:color-mix(in srgb, #d4a72c 22%, transparent); }
+         color:var(--or); background:color-mix(in srgb, var(--or-fond) 22%, transparent); }
 
   @media (max-width:600px) {
     .lot, .cmd { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
@@ -802,6 +806,7 @@
         <button type="button" class="btn primary" id="btnSearch">🔍 Rechercher</button>
       </div>
       <p class="search-help" id="searchHelp">Ou tapez quelques mots. Recherche ≈ 20 à 30 s ; vérifiez la fiche avant d'enregistrer.</p>
+      <button type="button" class="link" id="btnSearchApp" hidden>ou chercher dans l'app (≈ 0,07 $)</button>
       <p class="search-status" id="searchStatus" hidden></p>
     </div>
 
@@ -938,6 +943,7 @@ let bottles = [];        // toutes les bouteilles
 let filtre = 'Tous';     // couleur sélectionnée
 let editingId = null;    // id de la bouteille en cours de modification
 let pendingPhoto = null; // photo choisie dans le formulaire
+let photoFichier = null; // le fichier d'origine, pour l'envoyer à Claude
 
 /* ---------- Stockage (IndexedDB) ---------- */
 function openDB() {
@@ -992,6 +998,17 @@ const sansAccent = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u03
 const slug = (s) => sansAccent(s).toLowerCase();
 const norm = (s) => sansAccent(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const cleVin = (b) => [norm(b.domaine), norm(b.cuvee), norm(b.appellation), b.millesime || 'nm', norm(b.format || '')].join('|');
+const fmtEur = (n) => (Number(n) || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+const nomVin = (d) => ([d.domaine, d.cuvee, d.appellation, d.classement && !sansAccent(d.appellation || '').toLowerCase().includes(sansAccent(d.classement).toLowerCase()) ? d.classement : '', d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom') + (d.format ? ` (${d.format})` : '');
+const fmtUsd = (x) => (Math.round(Number(x || 0) * 100) / 100).toFixed(2).replace('.', ',') + ' $';
+// Message de suivi (chargement, erreur) sous un bouton ou une liste
+function statutGenerique(el, txt, erreur = false, enCours = false) {
+  el.hidden = !txt;
+  el.className = 'search-status' + (erreur ? ' err' : '');
+  el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
+}
+
 /* ---------- Noms de domaine homogènes ---------- */
 // Nettoie un nom renvoyé par la recherche : « Domaine Michel Noëllat (Michel Noëllat et Fils), Vosne-Romanée » → « Domaine Michel Noëllat »
 function nettoyerDomaine(nom) {
@@ -1537,6 +1554,15 @@ function ouvrirFormulaire(b = null, { ailleurs = false } = {}) {
   if (b && !b.classement) { const n = niveauCru(b); if (n) $('#f-classement').value = n === 'gc' ? 'Grand cru' : 'Premier cru'; }
   $('#q').value = '';
   statutRecherche('');
+  photoFichier = null;
+  // Avec Claude par défaut, la recherche passe par son Claude ; celle de l'app (payante) reste en lien discret
+  const viaClaude = claudeParDefaut();
+  $('#btnSearch').textContent = viaClaude ? '🤖 Avec mon Claude' : '🔍 Rechercher';
+  $('#btnSearchApp').hidden = !viaClaude;
+  $('#searchHelp').textContent = !viaClaude ? 'Ou tapez quelques mots. Recherche ≈ 20 à 30 s ; vérifiez la fiche avant d\'enregistrer.'
+    : b ? 'Votre Claude cherche la fiche et l\'enregistre dans votre cave (gratuit).'
+    : modeAilleurs ? 'Remplissez au moins le domaine ou l\'appellation : la dégustation est notée, puis votre Claude complète la fiche (gratuit).'
+    : 'Photo ou quelques mots : votre Claude lit, cherche la fiche, et vous validez l\'ajout ici (gratuit).';
   $('#dlg').showModal();
 }
 
@@ -1875,8 +1901,9 @@ function remplirFormulaireFiche(f) {
   afficherFiche(ficheEnCours);
 }
 
-async function rechercherVin() {
+async function rechercherVin({ payant = false } = {}) {
   if ($('#btnSearch').disabled) return; // une recherche est déjà en cours
+  const viaClaude = claudeParDefaut() && !payant;
   let requete = $('#q').value.trim();
   // La photo de l'étiquette (si elle vient d'être prise) est envoyée avec la recherche
   const image = pendingPhoto || null;
@@ -1889,7 +1916,10 @@ async function rechercherVin() {
     return;
   }
 
-  const code = codeAcces();
+  // Bouteille existante ou vin goûté ailleurs : Claude doit s'ouvrir tout de suite, avant toute attente réseau,
+  // sinon le navigateur bloque la fenêtre (iPhone surtout) et l'app quitterait la page avant d'enregistrer
+  if (viaClaude && (editingId || modeAilleurs)) return confierAClaude(requete, !!image);
+  const code = viaClaude ? 'compte' : codeAcces();
   if (!code) {
     statutRecherche('Un code d\'accès est nécessaire pour la recherche.', true);
     return;
@@ -1909,11 +1939,12 @@ async function rechercherVin() {
           const d = (await chercherDomaines([v.domaine])).get(cleDomaine(v.domaine));
           remplirFormulaireFiche({ ...f, ...(d && d.presentation && !f.domaineInfo ? { domaineInfo: d.presentation, domaineSite: d.site || '' } : {}) });
           catalogueProposeCle = cle;
-          statutRecherche('✓ Fiche reprise des fiches partagées (déjà recherchée par un membre, gratuit). Pour une nouvelle recherche sur internet, touchez à nouveau 🔍 Rechercher.');
+          statutRecherche('✓ Fiche reprise des fiches partagées (déjà recherchée par un membre, gratuit). Pour une nouvelle recherche sur internet, touchez à nouveau le bouton de recherche.');
           return;
         }
       }
     }
+    if (viaClaude) return await confierAClaude(requete, !!image);
     statutRecherche(image ? 'Lecture de l\'étiquette et recherche sur internet…' : 'Recherche en cours sur internet…', false, true);
     const f = await appelerAPI(image ? { requete, image } : { requete }, code);
     if (!f.trouve) {
@@ -1931,6 +1962,43 @@ async function rechercherVin() {
   } finally {
     bouton.disabled = false;
   }
+}
+
+// Recherche confiée à son Claude (gratuit pour l'app). Claude ne peut pas remplir ce formulaire :
+// - bouteille existante : Claude enregistre la fiche par son id, après l'enregistrement du formulaire ;
+// - vin goûté ailleurs : la dégustation est notée, puis Claude complète la fiche ;
+// - nouvel ajout : photo ou texte déposés dans « imports », comme l'ajout de bouteilles, et validés au retour.
+async function confierAClaude(requete, avecPhoto) {
+  if ((editingId || modeAilleurs) && !$('#form').checkValidity()) { $('#form').reportValidity(); return; }
+  if (editingId) {
+    const b = bottles.find((x) => x.id === editingId);
+    if (!b) return;
+    ouvrirDansClaude(messageFicheVin({ ...b, ...lireFormulaire() }));
+    $('#form').requestSubmit();
+    return;
+  }
+  if (modeAilleurs) {
+    const v = lireFormulaire();
+    if (!v.domaine && !v.appellation) {
+      statutRecherche('Indiquez au moins le domaine ou l\'appellation ci-dessous : la dégustation sera notée, puis votre Claude complétera la fiche.', true);
+      return;
+    }
+    ouvrirDansClaude(`Dans Ma Cave, je viens de noter la dégustation d'un vin goûté hors de ma cave : « ${nomVin(v)} »${requete && !avecPhoto ? ` (je l'avais cherché ainsi : « ${requete} »)` : ''}. Retrouve-le avec ma_cave (inclure_bus: true ; il est marqué hors_cave, à 0 bouteille ; s'il n'apparaît pas encore, attends quelques secondes et réessaie), cherche sa fiche sur le web (description, cépages, accords, service, apogée, fenêtre de dégustation, prix du marché, avec tes sources) et enregistre-la avec enregistrer_fiche.`);
+    $('#form').requestSubmit();
+    return;
+  }
+  const v = lireFormulaire();
+  const fichiers = [];
+  if (avecPhoto && photoFichier) fichiers.push(photoFichier);
+  const details = [
+    requete && `Vin : ${requete}`,
+    v.quantite > 0 && `Quantité : ${v.quantite} bouteille${v.quantite > 1 ? 's' : ''}`,
+    v.format && `Format : ${v.format}`, v.prix && `Prix payé : ${v.prix} € la bouteille`, v.emplacement && `Emplacement : ${v.emplacement}`,
+  ].filter(Boolean);
+  if (!fichiers.length || details.length > 1) fichiers.push(new File([`Vin à ajouter à ma cave.\n${details.join('\n')}\n`], 'vin.txt', { type: 'text/plain' }));
+  $('#dlg').close();
+  ouvrirAjout();
+  await lotViaClaude(fichiers);
 }
 
 /* ---------- Garde affinée (à la demande) et dégustations ---------- */
@@ -2012,7 +2080,8 @@ $('#degustBloc').addEventListener('click', (e) => {
   afficherGarde();
 });
 
-$('#btnSearch').onclick = rechercherVin;
+$('#btnSearch').onclick = () => rechercherVin();
+$('#btnSearchApp').onclick = () => rechercherVin({ payant: true });
 $('#q').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); rechercherVin(); }
 });
@@ -2029,8 +2098,11 @@ $('#photo').addEventListener('change', async (e) => {
     return;
   }
   e.target.value = '';
+  photoFichier = file;
   // Nouvelle bouteille : on lance directement la recherche à partir de l'étiquette
-  if (!editingId) rechercherVin();
+  // (avec Claude par défaut, seulement pour un ajout : la photo part chez Claude)
+  if (claudeParDefaut()) { if (!editingId && !modeAilleurs) rechercherVin(); }
+  else if (!editingId) rechercherVin();
 });
 
 $('#qMinus').onclick = () => { const i = $('#f-quantite'); i.value = Math.max(0, (parseInt(i.value, 10) || 0) - 1); };
@@ -2575,7 +2647,7 @@ $('#vueContenu').addEventListener('click', async (e) => {
   if (act === 'fermer') return $('#dlgVue').close();
   if (!b) return;
 
-  if (act === 'claudeFiche') return ouvrirDansClaude(`Dans Ma Cave, cherche sur le web la fiche du vin « ${nomVin(b)} » (id ${b.id}) : description, cépages, accords, service, apogée, fenêtre de dégustation et prix du marché, avec tes sources. Puis enregistre-la avec enregistrer_fiche.`);
+  if (act === 'claudeFiche') return ouvrirDansClaude(messageFicheVin(b));
   if (act === 'claudeDomaine') return ouvrirDansClaude(`Dans Ma Cave, présente-moi le domaine « ${b.domaine} » (histoire, vignoble, viticulture, style, cuvées phares), d'après une recherche web avec tes sources, puis enregistre la présentation avec enregistrer_domaine.`);
   if (act === 'claudeGarde') return ouvrirDansClaude(`Dans Ma Cave, affine la fenêtre de dégustation du vin « ${nomVin(b)} » (id ${b.id}) : cherche les fenêtres publiées (critiques, domaine, millésime), tiens compte de mes dégustations (fiche_vin), puis enregistre-la avec enregistrer_garde.`);
 
@@ -2842,8 +2914,10 @@ function afficherLot() {
   const aChercher = choisis.filter((v) => !v.fiche);
   $('#lotFichesBloc').hidden = !aChercher.length;
   $('#lotFiches').disabled = lotOccupe;
-  $('#lotFiches').checked = lotFiches ?? true;
-  $('#lotFichesTxt').textContent = `Compléter ${aChercher.length < choisis.length ? (aChercher.length > 1 ? `les ${aChercher.length} vins sans fiche` : 'le vin sans fiche') : 'chaque vin'} par une recherche internet (description, garde, accords, prix du marché) — environ ${fmtUsd(aChercher.length * COUT_FICHE)}. Sinon, ils sont ajoutés tels quels et vous pourrez lancer 🔍 Rechercher plus tard, vin par vin.`;
+  $('#lotFiches').checked = lotFiches ?? !claudeParDefaut();
+  $('#lotFichesTxt').textContent = claudeParDefaut()
+    ? `Chercher ${aChercher.length > 1 ? `les ${aChercher.length} fiches manquantes` : 'la fiche manquante'} dans l'app (payant, environ ${fmtUsd(aChercher.length * COUT_FICHE)}). Sinon, votre Claude pourra ${aChercher.length > 1 ? 'les' : 'la'} compléter après l'ajout (gratuit).`
+    : `Compléter ${aChercher.length < choisis.length ? (aChercher.length > 1 ? `les ${aChercher.length} vins sans fiche` : 'le vin sans fiche') : 'chaque vin'} par une recherche internet (description, garde, accords, prix du marché) — environ ${fmtUsd(aChercher.length * COUT_FICHE)}. Sinon, ils sont ajoutés tels quels et vous pourrez lancer 🔍 Rechercher plus tard, vin par vin.`;
   $('#lotGo').hidden = !choisis.length;
   $('#lotGo').disabled = lotOccupe;
   $('#lotGo').textContent = `Ajouter ${choisis.length} vin${choisis.length > 1 ? 's' : ''} (${n} bouteille${n > 1 ? 's' : ''})`;
@@ -3114,6 +3188,14 @@ $('#lotGo').onclick = async () => {
   lotSansFiche = ajoutes.filter((x) => !x.description && !x.demandeFiche && cleCatalogue(x));
   $('#lotDemander').hidden = !lotSansFiche.length;
   $('#lotDemander').textContent = `🤝 Demander gratuitement les fiches de ces ${lotSansFiche.length} vin${lotSansFiche.length > 1 ? 's' : ''}`;
+  // Avec Claude par défaut : les fiches manquantes sont confiées à son Claude
+  const sansFiche = ajoutes.filter((x) => !x.description);
+  if (claudeParDefaut() && sansFiche.length) {
+    $('#lotClaude').href = lienClaude(messageFichesVins(sansFiche));
+    $('#lotClaude').textContent = `🤖 Compléter ${sansFiche.length > 1 ? `les ${sansFiche.length} fiches` : 'la fiche'} avec mon Claude`;
+    $('#lotClaude').hidden = false;
+    $('#lotDemander').hidden = true;
+  }
   // Un seul vin : on ouvre directement sa fiche (pour compléter prix payé, emplacement…)
   if (total === 1 && ajoutes[0] && lot.every((v) => v.etat || !v.coche)) {
     $('#dlgLot').close();
@@ -3876,6 +3958,11 @@ function ouvrirDansClaude(message) {
   if (w) w.opener = null; else location.href = url;
 }
 
+// Demandes de fiches : un vin, ou plusieurs vins de la cave (par leur id)
+const messageFicheVin = (b) => `Dans Ma Cave, cherche sur le web la fiche du vin « ${nomVin(b)} » (id ${b.id}) : description, cépages, accords, service, apogée, fenêtre de dégustation et prix du marché, avec tes sources. Puis enregistre-la avec enregistrer_fiche.`;
+const messageFichesVins = (liste) => liste.length === 1 ? messageFicheVin(liste[0])
+  : `Dans Ma Cave, cherche sur le web les fiches de ces vins de ma cave : ${liste.slice(0, 30).map((b) => `« ${nomVin(b)} » (id ${b.id})`).join(' ; ')}. Pour chacun : description, cépages, accords, service, apogée, fenêtre de dégustation et prix du marché, avec tes sources, puis enregistre-la avec enregistrer_fiche. Présente aussi les domaines que ma cave ne connaît pas encore (enregistrer_domaine). Laisse sans fiche ce que tu ne trouves pas.`;
+
 // Dépose des photos ou des listes dans l'espace privé « imports », pour que Claude les lise par le connecteur
 async function deposerPourClaude(fichiers, but, commandeId = null) {
   const uid = session.user.id;
@@ -3910,6 +3997,7 @@ async function lotViaClaude(fichiers) {
     const id = await deposerPourClaude(fichiers, 'cave');
     const message = `Dans Ma Cave, traite l'import ${id} : lis-le avec lire_import, repère chaque vin (domaine, cuvée, appellation, millésime, format, quantité), cherche sa fiche sur le web et présente les domaines que ma cave ne connaît pas encore, puis envoie le tout avec proposer_vins : je vérifierai les quantités et les formats dans l'app avant d'ajouter.`;
     $('#lotClaude').href = lienClaude(message);
+    $('#lotClaude').textContent = '🤖 Ouvrir Claude pour les ajouter';
     $('#lotClaude').hidden = false;
     lotStatut(`✓ ${fichiers.length > 1 ? `${Math.min(fichiers.length, 12)} fichiers envoyés` : 'Fichier envoyé'}. Ouvrez Claude : il lira les vins et cherchera leurs fiches. Revenez ensuite ici : la liste s'affichera pour que vous vérifiiez les quantités et les formats avant d'ajouter.`);
   } catch (err) {
@@ -4459,6 +4547,7 @@ $('#vueStats').addEventListener('click', (e) => { if (e.target.closest('#stNoter
 $('#cnsDemander').onclick = () => ouvrirDansClaude(`Dans Ma Cave, sois mon sommelier : lis profil_sommelier (mes goûts, ce que tu as retenu de moi, ton dernier conseil et la répartition de ma cave), regarde ma cave avec ma_cave, puis dis-moi quoi acheter pour la compléter ou la rééquilibrer (régions, appellations, couleurs, vins prêts à boire ou de garde), avec des vins concrets dans mon budget, en vérifiant prix et disponibilité sur le web. Enregistre ensuite ton conseil avec enregistrer_conseil.`);
 $('#btnAilleursCave').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
 
+/* ---------- Navigation entre les onglets ---------- */
 function changerVue(v) {
   vueActive = v;
   for (const b of document.querySelectorAll('#onglets button')) b.setAttribute('aria-selected', String(b.dataset.vue === v));
@@ -4497,21 +4586,9 @@ async function majOnglets() {
   $('#ongletAdmin').hidden = !estAdmin;
 }
 
-const fmtEur = (n) => (Number(n) || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-const nomVin = (d) => ([d.domaine, d.cuvee, d.appellation, d.classement && !sansAccent(d.appellation || '').toLowerCase().includes(sansAccent(d.classement).toLowerCase()) ? d.classement : '', d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom') + (d.format ? ` (${d.format})` : '');
-
-function statutGenerique(el, txt, erreur = false, enCours = false) {
-  el.hidden = !txt;
-  el.className = 'search-status' + (erreur ? ' err' : '');
-  el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
-}
-
 /* =========================================================
    Administration
    ========================================================= */
-const fmtUsd = (x) => (Math.round(Number(x || 0) * 100) / 100).toFixed(2).replace('.', ',') + ' $';
-
 // Demandes de recherche gratuites en attente, par membre
 async function afficherDemandesAdmin(comptes) {
   const el = $('#adminDemandes');
@@ -4836,8 +4913,9 @@ function afficherCommande() {
         <strong style="font-size:.95rem">Ajouter un vin</strong>
         <div class="search-row">
           <input id="cv-q" placeholder="ex. Jamet Côte-Rôtie 2022" autocomplete="off">
-          <button type="button" class="btn secondary petit-btn" data-act="chercherVin">🔍</button>
+          <button type="button" class="btn secondary petit-btn" data-act="chercherVin">${claudeParDefaut() && jeSuisOrga ? '🤖' : '🔍'}</button>
         </div>
+        ${claudeParDefaut() && jeSuisOrga ? '<button type="button" class="link" data-act="chercherVinApp" style="justify-self:start">ou chercher dans l\'app (≈ 0,07 $)</button>' : ''}
         <input id="cv-domaine" placeholder="Domaine" autocomplete="off">
         <div class="lot-row"><input id="cv-appellation" placeholder="Appellation" autocomplete="off"><input id="cv-millesime" type="number" inputmode="numeric" placeholder="Millésime"></div>
         <div class="lot-row"><input id="cv-cuvee" placeholder="Cuvée (facultatif)" autocomplete="off"><input id="cv-prix" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Prix €"></div>
@@ -5565,9 +5643,15 @@ $('#cmdContenu').addEventListener('click', async (e) => {
     if (!confirm('Retirer ce vin de la commande (avec les parts de chacun) ?')) return;
     return actionCommande(() => sbFetch(`/rest/v1/commande_vins?id=eq.${vinId}`, { method: 'DELETE' }));
   }
-  if (act === 'chercherVin') {
+  if (act === 'chercherVin' || act === 'chercherVinApp') {
     const q = $('#cv-q').value.trim();
     if (q.length < 3) return statutGenerique($('#cv-statut'), 'Tapez quelques mots (domaine, appellation, millésime).', true);
+    // Avec Claude par défaut : son Claude ajoute le vin à la commande, avec sa fiche (gratuit pour l'app)
+    if (act === 'chercherVin' && claudeParDefaut() && c.organisateur === moi()) {
+      const prix = Number($('#cv-prix').value) || 0;
+      ouvrirDansClaude(`Dans Ma Cave, ajoute à la commande groupée « ${c.titre} » (commande_id ${c.id}) le vin « ${q} »${prix ? ` au prix de ${prix} € la bouteille` : ''} : identifie-le précisément (domaine, cuvée, appellation, millésime, couleur, format) par une recherche web${prix ? '' : ', demande-moi le prix proposé si je ne te l\'ai pas donné'}, ajoute-le avec ajouter_vins_commande, puis enregistre sa fiche avec enregistrer_fiche_commande et présente le domaine s'il ne l'est pas (enregistrer_domaine_commande).`);
+      return statutGenerique($('#cv-statut'), 'Demande envoyée à votre Claude : le vin apparaîtra dans la commande au retour dans l\'app.');
+    }
     const code = codeAcces(); if (!code) return;
     statutGenerique($('#cv-statut'), 'Recherche…', false, true);
     try {
@@ -5919,12 +6003,22 @@ window.addEventListener('hashchange', () => { if (/commande=/.test(location.hash
 /* ---------- Mise à jour automatique ---------- */
 // À l'ouverture, on compare la version affichée avec celle en ligne ;
 // si elle est plus récente, on recharge la page en contournant le cache.
+// La version en ligne est lue dans le petit fichier version.txt (même valeur que app-version) ;
+// s'il manque ou ne répond pas, on relit la page entière comme avant.
+const FORME_VERSION = /^\d{4}-\d{2}-\d{2}\.\d+$/;
+async function versionEnLigne() {
+  try {
+    const r = await fetch(location.pathname.replace(/[^/]*$/, '') + 'version.txt?v=' + Date.now(), { cache: 'no-store' });
+    const v = r.ok ? (await r.text()).trim() : '';
+    if (FORME_VERSION.test(v)) return v;
+  } catch { /* on passe à la page entière */ }
+  const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
+  return ((await r.text()).match(/name="app-version" content="([^"]+)"/) || [])[1];
+}
 async function verifierMiseAJour() {
   try {
     const actuelle = document.querySelector('meta[name="app-version"]').content;
-    const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
-    const html = await r.text();
-    const enLigne = (html.match(/name="app-version" content="([^"]+)"/) || [])[1];
+    const enLigne = await versionEnLigne();
     if (enLigne && enLigne !== actuelle && sessionStorage.getItem('maj-tentee') !== enLigne) {
       sessionStorage.setItem('maj-tentee', enLigne);
       location.replace(location.pathname + '?v=' + encodeURIComponent(enLigne));
