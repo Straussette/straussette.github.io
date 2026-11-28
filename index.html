@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#7b1e3a">
-<meta name="app-version" content="2026-11-26.3">
+<meta name="app-version" content="2026-11-28.1">
 <title>Ma Cave</title>
 <style>
   /* ---------- Couleurs (clair / sombre) ---------- */
@@ -14,17 +14,21 @@
     --ok:#2f7d4f; --vite:#b8661b; --passe:#b42a2a; --tot:#6b6f80;
     --shadow:0 1px 3px rgba(43,29,32,.08), 0 4px 14px rgba(43,29,32,.06);
     --c-rouge:#7b1e3a; --c-blanc:#d9c47c; --c-rose:#e99aa6; --c-effervescent:#c9bb72; --c-liquoreux:#cf8b2c;
+    --or:#8a6a12; --or-fond:#d4a72c;  /* pastille Grand Cru / 1er Cru */
+    --ombre-bouton:0 1px 4px rgba(0,0,0,.18);
     color-scheme:light;
   }
+  /* Fond sombre derrière les fenêtres : défini sur ::backdrop même, car les anciens Safari n'y transmettent pas les variables de :root */
+  ::backdrop { --voile:rgba(20,10,12,.55); }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg:#17110f; --surface:#221a19; --text:#f3ebe8; --muted:#a8999a; --border:#3a2e2d;
-      --accent:#c4466b; --shadow:none; color-scheme:dark;
+      --accent:#c4466b; --shadow:none; --or:#e2c15a; color-scheme:dark;
     }
   }
   :root[data-theme="dark"] {
     --bg:#17110f; --surface:#221a19; --text:#f3ebe8; --muted:#a8999a; --border:#3a2e2d;
-    --accent:#c4466b; --shadow:none; color-scheme:dark;
+    --accent:#c4466b; --shadow:none; --or:#e2c15a; color-scheme:dark;
   }
 
   * { box-sizing:border-box; }
@@ -46,7 +50,7 @@
   .stats { margin:4px 0 0; opacity:.85; font-size:.95rem; }
   .top .wrap { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
   .compte {
-    flex:none; background:rgba(255,255,255,.16); color:var(--on-accent); border:0; border-radius:999px;
+    flex:none; background:color-mix(in srgb, var(--on-accent) 16%, transparent); color:var(--on-accent); border:0; border-radius:999px;
     padding:7px 12px; font:inherit; font-size:.85rem; cursor:pointer; white-space:nowrap; max-width:46vw;
     overflow:hidden; text-overflow:ellipsis;
   }
@@ -145,7 +149,7 @@
   .fab {
     background:var(--accent); color:var(--on-accent); border:0; border-radius:999px;
     padding:14px 20px; font:inherit; font-weight:600; cursor:pointer; white-space:nowrap;
-    box-shadow:0 6px 20px rgba(123,30,58,.35);
+    box-shadow:0 6px 20px color-mix(in srgb, var(--accent) 35%, transparent);
   }
   .fab.alt { background:var(--surface); color:var(--accent); border:1px solid var(--border); }
 
@@ -279,13 +283,13 @@
     max-height:calc(100dvh - 24px); background:var(--surface); color:var(--text);
     overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
   }
-  dialog::backdrop { background:rgba(20,10,12,.55); }
+  dialog::backdrop { background:var(--voile); }
   /* Croix de fermeture, toujours visible en haut à droite de chaque fenêtre */
   .fermer-x {
     position:sticky; top:calc(8px + env(safe-area-inset-top)); z-index:5; display:grid; place-items:center;
     width:36px; height:36px; margin:8px 8px -44px auto; border:0; border-radius:50%;
     background:color-mix(in srgb, var(--surface) 85%, transparent); color:var(--text);
-    box-shadow:0 1px 4px rgba(0,0,0,.18); font-size:1.1rem; line-height:1; cursor:pointer;
+    box-shadow:var(--ombre-bouton); font-size:1.1rem; line-height:1; cursor:pointer;
     -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
   }
   dialog h2 { padding-right:40px; }
@@ -344,7 +348,7 @@
   .frise div span { display:block; font-size:.95rem; }
   .frise .actuelle { outline:2px solid var(--b); }
   .cru { display:inline-block; font-size:.72rem; font-weight:700; padding:1px 6px; border-radius:6px; margin-left:4px; vertical-align:1px;
-         color:#8a6a12; background:color-mix(in srgb, #d4a72c 22%, transparent); }
+         color:var(--or); background:color-mix(in srgb, var(--or-fond) 22%, transparent); }
 
   @media (max-width:600px) {
     .lot, .cmd { padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
@@ -992,6 +996,17 @@ const sansAccent = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u03
 const slug = (s) => sansAccent(s).toLowerCase();
 const norm = (s) => sansAccent(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const cleVin = (b) => [norm(b.domaine), norm(b.cuvee), norm(b.appellation), b.millesime || 'nm', norm(b.format || '')].join('|');
+const fmtEur = (n) => (Number(n) || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+const nomVin = (d) => ([d.domaine, d.cuvee, d.appellation, d.classement && !sansAccent(d.appellation || '').toLowerCase().includes(sansAccent(d.classement).toLowerCase()) ? d.classement : '', d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom') + (d.format ? ` (${d.format})` : '');
+const fmtUsd = (x) => (Math.round(Number(x || 0) * 100) / 100).toFixed(2).replace('.', ',') + ' $';
+// Message de suivi (chargement, erreur) sous un bouton ou une liste
+function statutGenerique(el, txt, erreur = false, enCours = false) {
+  el.hidden = !txt;
+  el.className = 'search-status' + (erreur ? ' err' : '');
+  el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
+}
+
 /* ---------- Noms de domaine homogènes ---------- */
 // Nettoie un nom renvoyé par la recherche : « Domaine Michel Noëllat (Michel Noëllat et Fils), Vosne-Romanée » → « Domaine Michel Noëllat »
 function nettoyerDomaine(nom) {
@@ -4459,6 +4474,7 @@ $('#vueStats').addEventListener('click', (e) => { if (e.target.closest('#stNoter
 $('#cnsDemander').onclick = () => ouvrirDansClaude(`Dans Ma Cave, sois mon sommelier : lis profil_sommelier (mes goûts, ce que tu as retenu de moi, ton dernier conseil et la répartition de ma cave), regarde ma cave avec ma_cave, puis dis-moi quoi acheter pour la compléter ou la rééquilibrer (régions, appellations, couleurs, vins prêts à boire ou de garde), avec des vins concrets dans mon budget, en vérifiant prix et disponibilité sur le web. Enregistre ensuite ton conseil avec enregistrer_conseil.`);
 $('#btnAilleursCave').onclick = () => ouvrirFormulaire(null, { ailleurs: true });
 
+/* ---------- Navigation entre les onglets ---------- */
 function changerVue(v) {
   vueActive = v;
   for (const b of document.querySelectorAll('#onglets button')) b.setAttribute('aria-selected', String(b.dataset.vue === v));
@@ -4497,21 +4513,9 @@ async function majOnglets() {
   $('#ongletAdmin').hidden = !estAdmin;
 }
 
-const fmtEur = (n) => (Number(n) || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-const nomVin = (d) => ([d.domaine, d.cuvee, d.appellation, d.classement && !sansAccent(d.appellation || '').toLowerCase().includes(sansAccent(d.classement).toLowerCase()) ? d.classement : '', d.millesime].filter(Boolean).join(' · ') || 'Vin sans nom') + (d.format ? ` (${d.format})` : '');
-
-function statutGenerique(el, txt, erreur = false, enCours = false) {
-  el.hidden = !txt;
-  el.className = 'search-status' + (erreur ? ' err' : '');
-  el.innerHTML = (enCours ? '<span class="spin"></span>' : '') + esc(txt);
-}
-
 /* =========================================================
    Administration
    ========================================================= */
-const fmtUsd = (x) => (Math.round(Number(x || 0) * 100) / 100).toFixed(2).replace('.', ',') + ' $';
-
 // Demandes de recherche gratuites en attente, par membre
 async function afficherDemandesAdmin(comptes) {
   const el = $('#adminDemandes');
@@ -5919,12 +5923,22 @@ window.addEventListener('hashchange', () => { if (/commande=/.test(location.hash
 /* ---------- Mise à jour automatique ---------- */
 // À l'ouverture, on compare la version affichée avec celle en ligne ;
 // si elle est plus récente, on recharge la page en contournant le cache.
+// La version en ligne est lue dans le petit fichier version.txt (même valeur que app-version) ;
+// s'il manque ou ne répond pas, on relit la page entière comme avant.
+const FORME_VERSION = /^\d{4}-\d{2}-\d{2}\.\d+$/;
+async function versionEnLigne() {
+  try {
+    const r = await fetch(location.pathname.replace(/[^/]*$/, '') + 'version.txt?v=' + Date.now(), { cache: 'no-store' });
+    const v = r.ok ? (await r.text()).trim() : '';
+    if (FORME_VERSION.test(v)) return v;
+  } catch { /* on passe à la page entière */ }
+  const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
+  return ((await r.text()).match(/name="app-version" content="([^"]+)"/) || [])[1];
+}
 async function verifierMiseAJour() {
   try {
     const actuelle = document.querySelector('meta[name="app-version"]').content;
-    const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
-    const html = await r.text();
-    const enLigne = (html.match(/name="app-version" content="([^"]+)"/) || [])[1];
+    const enLigne = await versionEnLigne();
     if (enLigne && enLigne !== actuelle && sessionStorage.getItem('maj-tentee') !== enLigne) {
       sessionStorage.setItem('maj-tentee', enLigne);
       location.replace(location.pathname + '?v=' + encodeURIComponent(enLigne));
