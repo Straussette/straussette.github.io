@@ -10,6 +10,8 @@ const ORIGINES_AUTORISEES = [
 
 const MODELE = "claude-sonnet-5-5";
 const RECHERCHES_MAX = 4; // limite le nombre de recherches web (et donc le coût)
+// Recherche web avec filtrage des pages avant lecture (réponses plus justes, moins de texte lu)
+const OUTIL_RECHERCHE = "web_search_20260209";
 
 const COULEURS = ["Rouge", "Blanc", "Rosé", "Effervescent", "Liquoreux"];
 
@@ -238,6 +240,13 @@ async function appelerClaude(cle: string, corps: unknown, compteur: Compteur) {
     + (u.cache_read_input_tokens ?? 0) * PRIX.entree * 0.1
     + (u.output_tokens ?? 0) * PRIX.sortie
     + (u.server_tool_use?.web_search_requests ?? 0) * PRIX.recherche;
+  // Claude peut refuser de répondre (réponse 200, stop_reason « refusal ») : on le traite comme une erreur lisible
+  if (r.ok && data?.stop_reason === "refusal") {
+    console.error("Refus de Claude", data?.stop_details?.category ?? "");
+    return { ok: false, data: { error: { message: "Claude a refusé cette recherche. Essayez avec votre propre Claude (Mon compte → Brancher mon Claude)." } } };
+  }
+  // Réponse coupée par la limite de longueur (la réflexion de Claude compte dans max_tokens) : noté pour le suivi
+  if (r.ok && data?.stop_reason === "max_tokens") console.error("Réponse coupée (max_tokens)", (corps as { max_tokens?: number })?.max_tokens);
   return { ok: r.ok, data };
 }
 
@@ -383,8 +392,8 @@ async function presenterDomaine(
   try {
     for (let tour = 0; tour < 3; tour++) {
       const { ok, data } = await appelerClaude(cle, {
-          model: MODELE, max_tokens: 1500, system: CONSIGNE_DOMAINE, messages,
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3,
+          model: MODELE, max_tokens: 4000, system: CONSIGNE_DOMAINE, messages,
+          tools: [{ type: OUTIL_RECHERCHE, name: "web_search", max_uses: 3,
             user_location: { type: "approximate", country: "FR", timezone: "Europe/Paris" } }],
         }, compteur);
       if (!ok) {
@@ -436,8 +445,8 @@ async function affinerGarde(
   try {
     for (let tour = 0; tour < 4; tour++) {
       const { ok, data } = await appelerClaude(cle, {
-          model: MODELE, max_tokens: 2500, system: CONSIGNE_GARDE, messages,
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6,
+          model: MODELE, max_tokens: 6000, system: CONSIGNE_GARDE, messages,
+          tools: [{ type: OUTIL_RECHERCHE, name: "web_search", max_uses: 6,
             user_location: { type: "approximate", country: "FR", timezone: "Europe/Paris" } }],
         }, compteur);
       if (!ok) {
@@ -483,7 +492,7 @@ async function conseillerAccord(
   const annee = new Date().getFullYear();
   try {
     const { ok, data } = await appelerClaude(cle, {
-        model: MODELE, max_tokens: 2500, system: CONSIGNE_ACCORD,
+        model: MODELE, max_tokens: 5000, system: CONSIGNE_ACCORD,
         messages: [{ role: "user", content: `Nous sommes en ${annee}.\nRepas : ${repas}\nOccasion : ${occasion}\n\nMa cave (un vin par ligne) :\n${lignes}` }],
       }, compteur);
     if (!ok) {
@@ -513,7 +522,7 @@ async function detecter(
   try {
     const { ok, data } = await appelerClaude(cle, {
         model: MODELE,
-        max_tokens: 3000,
+        max_tokens: 5000,
         system: CONSIGNE_DETECTION,
         messages: [{
           role: "user",
@@ -687,11 +696,11 @@ Deno.serve(async (req) => {
     for (let tour = 0; tour < 3; tour++) {
       const { ok, data } = await appelerClaude(cle, {
           model: MODELE,
-          max_tokens: 3000,
+          max_tokens: 6000,
           system: CONSIGNE,
           messages,
           tools: [{
-            type: "web_search_20250305",
+            type: OUTIL_RECHERCHE,
             name: "web_search",
             max_uses: RECHERCHES_MAX,
             user_location: { type: "approximate", country: "FR", timezone: "Europe/Paris" },
