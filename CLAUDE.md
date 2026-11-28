@@ -2,6 +2,8 @@
 
 Ce fichier guide Claude Code (claude.ai/code) lorsqu'il travaille sur le code de ce dépôt.
 
+Pour reprendre le travail (état des lieux, travail à deux avec branches et PR, déploiement, tests, pièges connus) : lire aussi `RELAIS.md`.
+
 ## Projet
 
 **Ma Cave** : application web de gestion de cave à vin, en français, installable comme une app. Elle est hébergée par GitHub Pages à l'adresse https://macave.pstrauss.org (domaine `pstrauss.org` chez Cloudflare, fichier `CNAME` ; l'ancienne adresse https://straussette.github.io y redirige). Le texte de l'interface, les noms dans le code, les commentaires et les messages de commit sont en français : il faut garder cette règle.
@@ -11,7 +13,7 @@ Le dépôt contient trois fichiers de code :
 - `supabase/functions/chercher-vin/index.ts` : une fonction serveur Supabase (Deno) qui appelle l'API Claude.
 - `supabase/functions/ma-cave-mcp/index.ts` : le connecteur « Ma Cave » pour Claude (serveur MCP), qui n'appelle pas l'API Claude.
 
-Les modèles des e-mails de Supabase Auth (confirmation, mot de passe, changement d'adresse, lien magique) sont dans `supabase/emails/`, envoyés par Resend depuis `macave@envoi.pstrauss.org` : à recoller dans Supabase s'ils changent (voir `LISEZMOI.md`).
+Les modèles des e-mails de Supabase Auth (confirmation, mot de passe, changement d'adresse, lien magique) sont dans `supabase/emails/`, envoyés par Resend depuis `macave@envoi.pstrauss.org` : à recoller dans Supabase s'ils changent (voir `supabase/emails/LISEZMOI.md`).
 
 Le schéma de la base, les règles d'accès (RLS), les fonctions RPC et les espaces de stockage sont configurés dans le projet Supabase et **ne sont pas** dans ce dépôt.
 
